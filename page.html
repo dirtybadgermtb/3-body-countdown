@@ -1,0 +1,1519 @@
+<title>Filament Timekeeper</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one screen. A quiet rail of mode and utility buttons on top, the flame digits alone on a
+   black stage, one row of transport controls underneath. The sound desk docks beside the stage on
+   wide screens and below the controls on a phone, so nothing ever overlaps. */
+:root {
+  color-scheme: dark;
+  --bg: #000;
+  --ink: #ecdcc4;
+  --ink-dim: #a8957c;
+  --line: rgba(255, 170, 90, .22);
+  --line-strong: rgba(255, 184, 108, .52);
+  --ember: #ff9a3c;
+  --gold: #ffd48a;
+  --wash: rgba(255, 150, 60, .1);
+  --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-data: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+  --gut-l: max(16px, env(safe-area-inset-left, 0px));
+  --gut-r: max(16px, env(safe-area-inset-right, 0px));
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { height: 100%; }
+body {
+  height: 100%; margin: 0; overflow-x: hidden;
+  background: var(--bg); color: var(--ink);
+  font: 14px/1.35 var(--font-ui);
+  -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+}
+[hidden] { display: none !important; }
+button, input { font: inherit; color: inherit; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+
+.app {
+  height: 100%; min-height: 330px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(140px, 1fr) auto auto;
+}
+.bar, .controls, .sound { transition: opacity .5s ease; }
+
+/* top rail */
+.bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  padding-block: 12px 6px; padding-left: var(--gut-l); padding-right: var(--gut-r);
+}
+.seg { display: inline-flex; flex-wrap: wrap; justify-content: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 20px; }
+.seg-btn {
+  position: relative; min-height: 32px; padding: 0 13px; border: 0; border-radius: 999px; background: transparent;
+  color: var(--ink-dim); cursor: pointer; white-space: nowrap; transition: color .15s, background-color .15s;
+}
+.seg-btn:hover { color: var(--ink); }
+.seg-btn[aria-pressed="true"] { background: var(--wash); color: var(--gold); }
+.dot { display: none; position: absolute; top: 4px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--ember); }
+.seg-btn.live .dot, .seg-btn.done .dot { display: inline-block; }
+.seg-btn.done .dot { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+.tools { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.btn {
+  min-height: 38px; padding: 0 14px; border: 1px solid var(--line); border-radius: 999px; background: transparent;
+  color: var(--ink-dim); cursor: pointer; white-space: nowrap; letter-spacing: .01em;
+  transition: color .15s, border-color .15s, background-color .15s;
+}
+.btn:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
+.btn[aria-pressed="true"], .btn[aria-expanded="true"] { color: var(--gold); border-color: var(--line-strong); background: var(--wash); }
+.btn:disabled { opacity: .38; cursor: default; }
+.btn.primary { min-width: 104px; color: var(--ink); border-color: var(--line-strong); }
+.btn.primary:hover:not(:disabled) { background: var(--wash); color: var(--gold); }
+.btn.small { min-height: 30px; padding: 0 11px; font-size: 13px; }
+
+/* stage */
+.stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+#view {
+  position: absolute; inset: 0; width: 100%; height: 100%; display: block;
+  /* stray strands fade out at the stage edge instead of being cut */
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+.status {
+  position: absolute; left: 0; top: 0; margin: 0; transform: translateY(-50%);
+  font: 12px/1 var(--font-data); letter-spacing: .16em; text-transform: uppercase; white-space: nowrap;
+  color: var(--ink-dim); pointer-events: none; transition: color .4s;
+}
+.status.hot { color: var(--gold); }
+
+/* transport */
+.controls { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-block: 6px 12px; padding-left: var(--gut-l); padding-right: var(--gut-r); }
+.credit { margin: 0; font: 11px/1 var(--font-data); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); text-align: center; }
+.panel { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: center; gap: 12px 16px; margin: 0; }
+.group { display: flex; align-items: flex-end; gap: 8px; }
+.field { display: grid; gap: 4px; justify-items: center; }
+.field span, .label { font: 11px/1 var(--font-data); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); }
+.field input {
+  width: 68px; height: 38px; padding: 0 4px; text-align: center;
+  font: 16px/1 var(--font-data); font-variant-numeric: tabular-nums;
+  color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 10px;
+}
+.field input:hover:not(:disabled) { border-color: var(--line-strong); }
+.field input:disabled { opacity: .45; }
+
+/* sound desk */
+.sound {
+  padding-block: 14px 18px; padding-left: var(--gut-l); padding-right: var(--gut-r);
+  border-top: 1px solid var(--line); overflow-y: auto; max-height: min(46vh, 430px);
+}
+.sound-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sound h2 { margin: 0; font: 600 13px/1 var(--font-ui); letter-spacing: .14em; text-transform: uppercase; color: var(--ink); }
+.hint { margin: 8px 0 0; font-size: 13px; color: var(--ink-dim); max-width: 46ch; }
+.note { margin: 0; max-width: 54ch; text-align: center; font-size: 13px; line-height: 1.45; color: var(--ink-dim); text-wrap: balance; }
+.presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 5px 22px; margin-top: 12px; }
+.row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 8px; min-width: 0; }
+.row label { font-size: 13px; color: var(--ink); }
+.row output { font: 12px/1 var(--font-data); color: var(--ink-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.row input { grid-column: 1 / -1; }
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 24px; margin: 0; background: transparent; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 2px; border-radius: 2px; background: var(--line-strong); }
+input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -6px; border: 0; border-radius: 50%; background: var(--ember); }
+input[type="range"]::-moz-range-track { height: 2px; border-radius: 2px; background: var(--line-strong); }
+input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--ember); }
+input[type="range"]:focus-visible { outline-offset: 0; border-radius: 8px; }
+
+@media (max-width: 760px) {
+  .bar { justify-content: center; }
+}
+@media (max-width: 480px) {
+  .seg-btn { padding: 0 10px; }
+}
+@media (max-width: 520px) {
+  /* five modes don't fit one row on a phone: three over two, centred, equal widths */
+  .bar .seg { display: grid; grid-template-columns: repeat(6, 1fr); width: 100%; max-width: 400px; }
+  .bar .seg .seg-btn { grid-column: span 2; padding: 0 4px; }
+  .bar .seg .seg-btn:nth-child(4) { grid-column: 2 / span 2; }
+}
+@media (max-width: 380px) {
+  .tools { gap: 4px; }
+  .tools .btn { padding: 0 9px; font-size: 13px; }
+  .seg-btn { padding: 0 8px; font-size: 13px; }
+}
+@media (max-width: 340px) {
+  .seg-btn { padding: 0 6px; font-size: 12px; }
+}
+@media (min-width: 900px), (orientation: landscape) and (min-width: 640px) and (max-height: 520px) {
+  .app.tuning { grid-template-columns: minmax(0, 1fr) 316px; grid-template-rows: auto minmax(140px, 1fr) auto; }
+  .app.tuning .bar { grid-column: 1 / -1; }
+  .app.tuning .sound { grid-column: 2; grid-row: 2 / 4; max-height: none; border-top: 0; border-left: 1px solid var(--line); padding-left: 20px; }
+  .app.tuning .sliders { grid-template-columns: 1fr; }
+}
+
+/* full screen: the chrome fades away while nothing is being touched */
+body.idle { cursor: none; }
+body.idle .bar, body.idle .controls, body.idle .sound { opacity: 0; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .bar, .controls, .sound, .status, .btn, .seg-btn { transition: none; } }
+</style>
+
+<div class="app" id="app">
+  <header class="bar">
+    <div class="seg" role="group" aria-label="Mode">
+      <button type="button" class="seg-btn" id="modeCountdown" data-mode="countdown" aria-pressed="true" title="Countdown (1)">Countdown<span class="dot" aria-hidden="true"></span></button>
+      <button type="button" class="seg-btn" id="modeClock" data-mode="clock" aria-pressed="false" title="Clock (2)">Clock</button>
+      <button type="button" class="seg-btn" id="modeStopwatch" data-mode="stopwatch" aria-pressed="false" title="Stopwatch (3)">Stopwatch<span class="dot" aria-hidden="true"></span></button>
+      <button type="button" class="seg-btn" id="modePomodoro" data-mode="pomodoro" aria-pressed="false" title="Pomodoro (4)">Pomodoro<span class="dot" aria-hidden="true"></span></button>
+      <button type="button" class="seg-btn" id="modeSeason" data-mode="season" aria-pressed="false" title="Season 2 premiere (5)">Season 2</button>
+    </div>
+    <div class="tools">
+      <button type="button" class="btn" id="soundToggle" aria-pressed="false" title="Turn sound on or off (M)">Sound off</button>
+      <button type="button" class="btn" id="tuneToggle" aria-expanded="false" aria-controls="soundPanel" title="Open the sound controls">Tune sound</button>
+      <button type="button" class="btn" id="fsToggle" aria-pressed="false" title="Full screen (F)">Full screen</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <canvas id="view" aria-hidden="true"></canvas>
+    <p class="sr-only" id="srTime" role="timer" aria-live="off"></p>
+    <p class="status" id="status" role="status"></p>
+  </main>
+
+  <div class="controls" id="controls">
+    <form class="panel" id="panelCountdown" novalidate>
+      <div class="group" role="group" aria-label="Countdown length">
+        <label class="field" for="cdH"><span>Hours</span><input id="cdH" type="number" inputmode="numeric" min="0" max="99" step="1" value="0"></label>
+        <label class="field" for="cdM"><span>Minutes</span><input id="cdM" type="number" inputmode="numeric" min="0" max="59" step="1" value="5"></label>
+        <label class="field" for="cdS"><span>Seconds</span><input id="cdS" type="number" inputmode="numeric" min="0" max="59" step="1" value="0"></label>
+      </div>
+      <div class="group">
+        <button type="submit" class="btn primary" id="cdGo" title="Start or pause (Space)">Start</button>
+        <button type="button" class="btn" id="cdReset" title="Reset (R)">Reset</button>
+      </div>
+    </form>
+
+    <div class="panel" id="panelClock" hidden>
+      <div class="seg" role="group" aria-label="Clock format">
+        <button type="button" class="seg-btn" id="fmt12" aria-pressed="false">12-hour</button>
+        <button type="button" class="seg-btn" id="fmt24" aria-pressed="true">24-hour</button>
+      </div>
+    </div>
+
+    <div class="panel" id="panelStopwatch" hidden>
+      <div class="group">
+        <button type="button" class="btn primary" id="swGo" title="Start or pause (Space)">Start</button>
+        <button type="button" class="btn" id="swReset" title="Reset (R)">Reset</button>
+      </div>
+    </div>
+    <form class="panel" id="panelPomodoro" novalidate hidden>
+      <div class="group" role="group" aria-label="Pomodoro plan">
+        <label class="field" for="pmWork"><span>Work min</span><input id="pmWork" type="number" inputmode="numeric" min="1" max="180" step="1" value="25"></label>
+        <label class="field" for="pmRest"><span>Rest min</span><input id="pmRest" type="number" inputmode="numeric" min="1" max="120" step="1" value="5"></label>
+        <label class="field" for="pmSessions"><span>Sessions</span><input id="pmSessions" type="number" inputmode="numeric" min="1" max="20" step="1" value="4"></label>
+      </div>
+      <div class="group">
+        <button type="submit" class="btn primary" id="pmGo" title="Start or pause (Space)">Start</button>
+        <button type="button" class="btn" id="pmSkip" title="Skip to the next work or rest period">Skip</button>
+        <button type="button" class="btn" id="pmReset" title="Reset (R)">Reset</button>
+      </div>
+    </form>
+    <div class="panel" id="panelSeason" hidden>
+      <p class="note" id="seasonNote"></p>
+    </div>
+    <p class="credit" id="credit">Created by Fable 5.2 Extra</p>
+  </div>
+
+  <aside class="sound" id="soundPanel" aria-label="Sound controls" hidden>
+    <div class="sound-head">
+      <h2>Sound</h2>
+      <button type="button" class="btn small" id="soundToggle2" aria-pressed="false">Turn on</button>
+    </div>
+    <p class="hint" id="soundHint">Sound is off. Turn it on to hear it while a timer is running, or at any time in Clock.</p>
+    <div class="presets" id="presets" role="group" aria-label="Sound presets"></div>
+    <div class="sliders">
+      <div class="row"><label for="sRoot">Root tone</label><output id="oRoot" for="sRoot"></output><input id="sRoot" type="range" min="24" max="43" step="1"></div>
+      <div class="row"><label for="sVolume">Volume</label><output id="oVolume" for="sVolume"></output><input id="sVolume" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sSub">Sub bass</label><output id="oSub" for="sSub"></output><input id="sSub" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sOctave">Octave harmonic</label><output id="oOctave" for="sOctave"></output><input id="sOctave" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sFifth">Fifth harmonic</label><output id="oFifth" for="sFifth"></output><input id="sFifth" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sWarmth">Warmth</label><output id="oWarmth" for="sWarmth"></output><input id="sWarmth" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sRate">Pulse rate</label><output id="oRate" for="sRate"></output><input id="sRate" type="range" min="0.1" max="4" step="0.05"></div>
+      <div class="row"><label for="sDepth">Pulse depth</label><output id="oDepth" for="sDepth"></output><input id="sDepth" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sShimmer">High shimmer</label><output id="oShimmer" for="sShimmer"></output><input id="sShimmer" type="range" min="0" max="100" step="1"></div>
+      <div class="row"><label for="sTick">Tick</label><output id="oTick" for="sTick"></output><input id="sTick" type="range" min="0" max="100" step="1"></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+(function () {
+'use strict';
+
+/* ───────────────────────── helpers ───────────────────────── */
+const $ = id => document.getElementById(id);
+const TAU = Math.PI * 2;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const smooth = t => t * t * (3 - 2 * t);
+const pad2 = n => (n < 10 ? '0' : '') + n;
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ───────────────────────── timekeeping state ─────────────────────────
+   Everything is derived from Date.now(), never from frame counts, so a tab that
+   was in the background (or a laptop that slept) shows the right time on return. */
+const SW_MAX = 359999990;                     // 99:59:59.99
+let mode = 'countdown';
+let hour12 = (() => { try { return !!new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions().hour12; } catch (e) { return false; } })();
+const cd = { parts: [0, 5, 0], dur: 300000, status: 'idle', endAt: 0, remain: 0 };
+const sw = { status: 'idle', startAt: 0, acc: 0 };
+
+function cdSetParts(h, m, s) { cd.parts = [h, m, s]; cd.dur = ((h * 60 + m) * 60 + s) * 1000; }
+function cdRemaining(t) {
+  if (cd.status === 'running') return Math.max(0, cd.endAt - t);
+  if (cd.status === 'paused') return cd.remain;
+  if (cd.status === 'finished') return 0;
+  return cd.dur;
+}
+function cdCheck() {
+  if (cd.status === 'running' && Date.now() >= cd.endAt) {
+    cd.status = 'finished';
+    sound.finish();
+    changed();
+  }
+}
+function cdPrimary() {
+  cdCheck();
+  const t = Date.now();
+  if (cd.status === 'idle' || cd.status === 'finished') {
+    if (cd.dur <= 0) return;
+    cd.endAt = t + cd.dur; cd.status = 'running';
+  } else if (cd.status === 'running') {
+    cd.remain = Math.max(0, cd.endAt - t); cd.status = 'paused';
+  } else if (cd.status === 'paused') {
+    cd.endAt = t + cd.remain; cd.status = 'running';
+  }
+  sound.syncChime();
+  changed();
+}
+function cdReset() { cdCheck(); cd.status = 'idle'; sound.syncChime(); changed(); }
+
+function swElapsed(t) { return sw.acc + (sw.status === 'running' ? t - sw.startAt : 0); }
+function swPrimary() {
+  const t = Date.now();
+  if (sw.status === 'running') { sw.acc += t - sw.startAt; sw.status = 'paused'; }
+  else { if (sw.status === 'idle') sw.acc = 0; sw.startAt = t; sw.status = 'running'; }
+  changed();
+}
+function swReset() { sw.status = 'idle'; sw.acc = 0; changed(); }
+
+/* Pomodoro: the work and rest periods are laid end to end on one elapsed-time line, so which
+   period is current is a pure function of how long the plan has been running. That keeps it
+   right after any time in the background, and it shares no state with the other timers.
+   A plan is N work periods with a rest between each pair; it ends when the last work period does. */
+const pomo = { work: 25, rest: 5, sessions: 4, status: 'idle', startAt: 0, acc: 0, seen: 0 };
+const pmW = () => pomo.work * 60000, pmR = () => pomo.rest * 60000;
+const pmTotal = () => pomo.sessions * pmW() + (pomo.sessions - 1) * pmR();
+function pmElapsed(t) { return pomo.status === 'running' ? pomo.acc + (t - pomo.startAt) : pomo.acc; }
+function pmPhase(e) {                 // period index i: even = work, odd = rest
+  const W = pmW(), cyc = W + pmR(), N = pomo.sessions, T = pmTotal();
+  if (e >= T) return { i: 2 * N - 1, session: N, rest: false, remain: 0, end: T, done: true };
+  const k = Math.floor(e / cyc), within = e - k * cyc;
+  return within < W
+    ? { i: 2 * k, session: k + 1, rest: false, remain: W - within, end: k * cyc + W, done: false }
+    : { i: 2 * k + 1, session: k + 1, rest: true, remain: cyc - within, end: (k + 1) * cyc, done: false };
+}
+const pmPhaseEnd = i => { const cyc = pmW() + pmR(); return i % 2 ? (i + 1) / 2 * cyc : i / 2 * cyc + pmW(); };
+function pmNextBoundary() {           // when the current period ends, as a wall-clock time
+  if (pomo.status !== 'running') return null;
+  const ph = pmPhase(pmElapsed(Date.now()));
+  return ph.done ? null : { key: pomo.startAt + ph.end - pomo.acc, rest: ph.rest };
+}
+function pmCheck() {
+  if (pomo.status !== 'running') return;
+  const ph = pmPhase(pmElapsed(Date.now()));
+  if (ph.i === pomo.seen && !ph.done) return;
+  const last = ph.i - 1;              // the period that just ended
+  pomoChime.passed(pomo.startAt + pmPhaseEnd(last) - pomo.acc, last % 2 === 1);
+  pomo.seen = ph.i;
+  if (ph.done) { pomo.status = 'finished'; pomo.acc = pmTotal(); }
+  pomoChime.sync();
+  changed();
+}
+function pmPrimary() {
+  pmCheck();
+  const t = Date.now();
+  if (pomo.status === 'running') { pomo.acc = pmElapsed(t); pomo.status = 'paused'; }
+  else {
+    if (pomo.status !== 'paused') { pomo.acc = 0; pomo.seen = 0; }
+    pomo.startAt = t; pomo.status = 'running';
+  }
+  pomoChime.sync(); changed();
+}
+function pmReset() { pomo.status = 'idle'; pomo.acc = 0; pomo.seen = 0; pomoChime.sync(); changed(); }
+function pmSkip() {                   // jump to the start of the next period, silently
+  pmCheck();
+  if (pomo.status !== 'running' && pomo.status !== 'paused') return;
+  const t = Date.now();
+  pomo.acc = pmPhase(pmElapsed(t)).end; pomo.startAt = t;
+  const nx = pmPhase(pomo.acc); pomo.seen = nx.i;
+  if (nx.done) { pomo.status = 'finished'; pomo.acc = pmTotal(); }
+  pomoChime.sync(); changed();
+}
+/* Season 2 of 3 Body Problem. Netflix announced Thursday, January 14, 2027 (Netflix Tudum,
+   November 2026) without a time of day; Netflix releases new seasons at 12:00 AM Pacific, which
+   is 08:00 UTC in January. Change this one line if the date moves. */
+const SEASON2 = Date.UTC(2027, 0, 14, 8, 0, 0);
+function longHms(total) {            // hours are not capped at 99 here: 1370:12:44
+  const h = Math.min(99999, Math.floor(total / 3600)), m = Math.floor((total % 3600) / 60), sec = total % 60;
+  return pad2(h) + ':' + pad2(m) + ':' + pad2(sec);
+}
+function seasonDays(r) { const d = Math.floor(r / 864e5); return d >= 2 ? d + ' days' : d === 1 ? '1 day' : ''; }
+function seasonWhen(o) {
+  try {
+    return new Intl.DateTimeFormat(undefined, Object.assign({ weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: hour12 }, o)).format(new Date(SEASON2));
+  } catch (e) { return ''; }
+}
+function seasonStatus() {
+  const r = SEASON2 - Date.now();
+  if (r <= 0) return 'Season 2 is out';
+  const d = seasonDays(r);
+  if (stage.clientWidth < 560) return d ? d + ' to go' : 'Premieres ' + timeLabel(SEASON2);
+  return 'Premieres ' + seasonWhen({}) + (d ? ' · ' + d : '');
+}
+function seasonNoteText() {
+  if (SEASON2 <= Date.now()) return '3 Body Problem Season 2 premiered on Netflix on Thursday, January 14, 2027.';
+  const here = seasonWhen({}), pt = seasonWhen({ timeZone: 'America/Los_Angeles' });
+  return "3 Body Problem Season 2 premieres on Netflix on Thursday, January 14, 2027. The count runs to 12:00 AM Pacific, Netflix's usual release time" +
+    (here && pt && here !== pt ? ', which is ' + here + ' where you are.' : '.');
+}
+let seasonPrev = SEASON2 - Date.now();
+function seasonCheck() {              // one bell if the premiere arrives while the page is open
+  const r = SEASON2 - Date.now();
+  if (seasonPrev > 0 && r <= 0) {
+    if (r > -5000 && sound.on && sound.ac) sound.ringing.push(chime(sound.ac, sound.d.out, midiHz(SP.root), sound.ac.currentTime + 0.03));
+    seasonPrev = r; changed(); return;
+  }
+  seasonPrev = r;
+}
+
+function pmStatusText() {
+  const N = pomo.sessions;
+  if (pomo.status === 'idle') return N + ' × ' + pomo.work + ' min' + (N > 1 ? ' · rest ' + pomo.rest : '');
+  if (pomo.status === 'finished') return N > 1 ? 'All ' + N + ' sessions done' : 'Session done';
+  const ph = pmPhase(pmElapsed(Date.now()));
+  const what = ph.rest ? 'Rest ' + ph.session + ' of ' + (N - 1) : 'Work ' + ph.session + ' of ' + N;
+  return pomo.status === 'paused' ? 'Paused · ' + what : what;
+}
+function pmTitleText(t) {
+  if (pomo.status === 'idle') return '';
+  if (pomo.status === 'finished') return 'Sessions done · Pomodoro';
+  const ph = pmPhase(pmElapsed(t));
+  return hms(Math.ceil(ph.remain / 1000)) + ' · ' + (ph.rest ? 'Rest' : 'Work') + ' ' + ph.session + '/' + pomo.sessions;
+}
+
+function hms(total) {
+  const h = Math.min(99, Math.floor(total / 3600)), m = Math.floor((total % 3600) / 60), s = total % 60;
+  return pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+}
+
+/* What the stage should show right now. */
+const V = { main: '00:00:00', sub: '', speed: 1, inten: 1, flare: 1, lead: 0 };
+function computeView(tNow, rt) {
+  V.speed = 1; V.inten = 1; V.flare = 1; V.lead = 0; V.sub = '';
+  if (mode === 'countdown') {
+    V.main = hms(Math.ceil(cdRemaining(tNow) / 1000));
+    if (cd.status === 'paused') { V.speed = 0.3; V.inten = 0.62; }
+    else if (cd.status === 'finished') { V.speed = 1.2; V.flare = 2; V.inten = 0.86 + 0.14 * Math.sin(rt * 1.7); }
+  } else if (mode === 'clock') {
+    const d = new Date(tNow); let h = d.getHours();
+    const tail = ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
+    if (hour12) {
+      V.sub = h < 12 ? 'AM' : 'PM'; h = h % 12 || 12;
+      V.main = (h < 10 ? ' ' + h : '' + h) + tail; V.lead = h < 10 ? 1 : 0;
+    } else V.main = pad2(h) + tail;
+  } else if (mode === 'stopwatch') {
+    const ms = Math.min(swElapsed(tNow), SW_MAX);
+    V.main = hms(Math.floor(ms / 1000));
+    V.sub = '.' + pad2(Math.floor(ms / 10) % 100);
+    if (sw.status === 'paused') { V.speed = 0.3; V.inten = 0.66; }
+  } else if (mode === 'season') {
+    const r = SEASON2 - tNow;
+    V.main = longHms(Math.max(0, Math.ceil(r / 1000)));
+    V.sub = 'S2';
+    if (r <= 0) { V.speed = 1.2; V.flare = 2; V.inten = 0.86 + 0.14 * Math.sin(rt * 1.7); }
+  } else {
+    const ph = pmPhase(pmElapsed(tNow));
+    V.main = hms(Math.ceil(ph.remain / 1000));
+    V.sub = ph.session + '/' + pomo.sessions;
+    if (pomo.status === 'finished') { V.speed = 1.2; V.flare = 2; V.inten = 0.86 + 0.14 * Math.sin(rt * 1.7); }
+    else if (pomo.status === 'paused') { V.speed = 0.3; V.inten = 0.62; }
+    else if (pomo.status === 'running' && ph.rest) { V.speed = 0.6; V.inten = 0.8; }   // the flame settles while you rest
+  }
+  if (reduceMotion) { V.speed *= 0.45; V.flare = Math.min(V.flare, 1.2); }
+}
+
+/* ───────────────────────── sound ─────────────────────────
+   A bass drone: a sine on the root with a quiet detuned partner, a sine an octave below, sines at the octave and
+   the fifth, and a low-passed saw pair for warmth. All of it sits under a fixed low-pass, so the
+   default sound has no high content. A slow LFO pulses the level. The shimmer is a separate,
+   silent-by-default layer of high partials whose pitch and level wander on their own LFOs. */
+const SOUND_DEFAULT = { root: 33, volume: 60, sub: 70, octave: 35, fifth: 20, warmth: 40, rate: 0.8, depth: 50, shimmer: 0, tick: 0 };
+const PRESETS = [
+  ['Deep hum',     { root: 33, sub: 70, octave: 35, fifth: 20, warmth: 40, rate: 0.8,  depth: 50, shimmer: 0 }],
+  ['Slow tide',    { root: 29, sub: 85, octave: 25, fifth: 35, warmth: 30, rate: 0.25, depth: 75, shimmer: 0 }],
+  ['Engine room',  { root: 26, sub: 60, octave: 55, fifth: 10, warmth: 75, rate: 2.4,  depth: 45, shimmer: 0 }],
+  ['Hollow fifth', { root: 31, sub: 50, octave: 30, fifth: 75, warmth: 25, rate: 0.5,  depth: 35, shimmer: 0 }],
+  ['Aurora',       { root: 33, sub: 60, octave: 40, fifth: 30, warmth: 35, rate: 0.4,  depth: 50, shimmer: 45 }]
+];
+const SP = Object.assign({}, SOUND_DEFAULT);
+const midiHz = m => 440 * Math.pow(2, (m - 69) / 12);
+const NOTE = ['C', 'C♯', 'D', 'D♯', 'E', 'F', 'F♯', 'G', 'G♯', 'A', 'A♯', 'B'];
+const noteName = m => NOTE[m % 12] + (Math.floor(m / 12) - 1);
+
+function buildDrone(ac, p) {
+  const out = ac.createGain(); out.gain.value = 0;                 // overall volume
+  const lim = ac.createDynamicsCompressor();
+  lim.threshold.value = -9; lim.knee.value = 9; lim.ratio.value = 8; lim.attack.value = 0.02; lim.release.value = 0.35;
+  out.connect(lim); lim.connect(ac.destination);
+
+  const vca = ac.createGain();                                     // pulse
+  const tone = ac.createBiquadFilter(); tone.type = 'lowpass'; tone.Q.value = 0.6;
+  const lid = ac.createBiquadFilter(); lid.type = 'lowpass'; lid.frequency.value = 1200; lid.Q.value = 0.5;
+  const bus = ac.createGain();
+  // The gate carries everything that belongs to a running clock (drone, shimmer, tick). It opens
+  // while the timer on screen is counting and closes when it is not. Bells bypass it.
+  const gate = ac.createGain(); gate.gain.value = 0; gate.connect(out);
+  bus.connect(tone); tone.connect(lid); lid.connect(vca); vca.connect(gate);
+
+  const oscs = [];
+  const osc = (type, detune) => { const o = ac.createOscillator(); o.type = type; o.detune.value = detune || 0; oscs.push(o); return o; };
+  const gain = v => { const g = ac.createGain(); g.gain.value = v; return g; };
+
+  const rootG = gain(0.46), root2G = gain(0.09), subG = gain(0), octG = gain(0), fifG = gain(0), warmG = gain(0);
+  const rA = osc('sine'), rB = osc('sine', 7); rA.connect(rootG); rB.connect(root2G); rootG.connect(bus); root2G.connect(bus);
+  const sb = osc('sine'); sb.connect(subG); subG.connect(bus);
+  const oc = osc('sine', 3); oc.connect(octG); octG.connect(bus);
+  const fi = osc('sine', -3); fi.connect(fifG); fifG.connect(bus);
+  const wLP = ac.createBiquadFilter(); wLP.type = 'lowpass'; wLP.Q.value = 0.8;
+  const wA = osc('sawtooth', -7), wB = osc('sawtooth', 6); wA.connect(wLP); wB.connect(wLP); wLP.connect(warmG); warmG.connect(bus);
+
+  // Pulse: a main swell with a softer echo at twice the rate, both shaped so they never click.
+  const curve = new Float32Array(1025);
+  for (let i = 0; i < 1025; i++) curve[i] = Math.pow(i / 1024, 1.5) - 1;        // sine in → [-1, 0] out
+  const shaper = () => { const w = ac.createWaveShaper(); w.curve = curve; return w; };
+  const l1 = osc('sine'), l2 = osc('sine'), s1 = shaper(), s2 = shaper(), d1 = gain(0), d2 = gain(0), dF = gain(0);
+  l1.connect(s1); l2.connect(s2); s1.connect(d1); s2.connect(d2); d1.connect(vca.gain); d2.connect(vca.gain);
+  s1.connect(dF); dF.connect(tone.frequency);
+
+  // Shimmer: high partials that drift in pitch and swell in level, through a short echo.
+  const shim = gain(0), hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 500;
+  const dl = ac.createDelay(1); dl.delayTime.value = 0.43;
+  const fb = gain(0.42), wet = gain(0.55);
+  hp.connect(shim); shim.connect(gate); shim.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet); wet.connect(gate);
+  const tickG = gain(0); tickG.connect(gate);                      // tick level; the ticker feeds it
+  const voices = [[24, 0.5, 0.071, 0.37, 0.19], [32, 0.36, 0.113, 0.29, 0.13], [48, 0.22, 0.157, 0.53, 0.23]].map(v => {
+    const o = osc('sine'), vg = gain(v[1] * 0.5);
+    const a = osc('sine'), ag = gain(170); a.frequency.value = v[2]; a.connect(ag); ag.connect(o.detune);   // slow wander, ±170 cents
+    const b = osc('sine'), bg = gain(26);  b.frequency.value = v[3]; b.connect(bg); bg.connect(o.detune);   // quicker waver
+    const c = osc('sine'), cg = gain(v[1] * 0.5); c.frequency.value = v[4]; c.connect(cg); cg.connect(vg.gain);
+    o.connect(vg); vg.connect(hp);
+    return { o: o, m: v[0] };
+  });
+
+  function apply(q, tc) {
+    const t = ac.currentTime, f0 = midiHz(q.root);
+    const S = (param, v) => { if (tc) param.setTargetAtTime(v, t, tc); else param.value = v; };
+    S(rA.frequency, f0); S(rB.frequency, f0); S(sb.frequency, f0 / 2); S(oc.frequency, f0 * 2); S(fi.frequency, f0 * 1.5);
+    S(wA.frequency, f0); S(wB.frequency, f0);
+    const w = q.warmth / 100, d = q.depth / 100;
+    S(subG.gain, q.sub / 100 * 0.5); S(octG.gain, q.octave / 100 * 0.24); S(fifG.gain, q.fifth / 100 * 0.24);
+    S(warmG.gain, w * 0.15); S(wLP.frequency, f0 * (1.6 + 5.4 * w));
+    const cut = f0 * (3 + 9 * w);
+    S(tone.frequency, cut); S(dF.gain, d * cut * 0.35);
+    S(l1.frequency, q.rate); S(l2.frequency, q.rate * 2); S(d1.gain, d * 0.7); S(d2.gain, d * 0.3);
+    voices.forEach(v => S(v.o.frequency, f0 * v.m));
+    S(shim.gain, Math.pow(q.shimmer / 100, 1.5) * 0.2);
+    S(tickG.gain, Math.pow((q.tick || 0) / 100, 1.5) * 0.45);
+  }
+  apply(p, 0);
+  return { out: out, gate: gate, tickIn: tickG, apply: apply, start: () => oscs.forEach(o => o.start()) };
+}
+
+/* One soft bell, tuned to the root, with a long tail. It joins the master bus beside the drone. */
+function chime(ac, dest, rootHz, when) {
+  let base = rootHz; while (base < 196) base *= 2;
+  const mix = ac.createGain(); mix.gain.value = 0.5;
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400; lp.Q.value = 0.4;
+  mix.connect(lp); lp.connect(dest);
+  const oscs = [[1, 1, 2.8], [2, 0.3, 1.7], [3, 0.12, 1.0], [4.2, 0.04, 0.6]].map(v => {
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = 'sine'; o.frequency.value = base * v[0]; g.gain.value = 0;
+    g.gain.setValueAtTime(0, when); g.gain.linearRampToValueAtTime(v[1], when + 0.12); g.gain.setTargetAtTime(0, when + 0.12, v[2]);
+    o.connect(g); g.connect(mix); o.start(when); o.stop(when + 20);
+    return o;
+  });
+  return { when: when, key: 0, cancel() { oscs.forEach(o => { try { o.stop(); } catch (e) {} try { o.disconnect(); } catch (e) {} }); try { lp.disconnect(); } catch (e) {} } };
+}
+
+const sound = {
+  on: false, ac: null, d: null, pending: null, ringing: [], doneFor: -1, offTimer: 0,
+  level() { return Math.pow(SP.volume / 100, 2) * 0.9; },
+  async setOn(v) {
+    cdCheck(); pmCheck();
+    if (v) {
+      if (!this.ac) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) { $('soundHint').textContent = 'This browser cannot play Web Audio, so sound is unavailable.'; return; }
+        this.ac = new AC(); this.d = buildDrone(this.ac, SP); this.d.start();
+      }
+      this.on = true; syncSound();
+      try { await this.ac.resume(); } catch (e) {}
+      if (!this.on) return;
+      this.d.out.gain.setTargetAtTime(this.level(), this.ac.currentTime, 0.6);
+      this.syncChime(); pomoChime.sync(true); ticker.sync();
+    } else {
+      this.on = false; syncSound();
+      if (!this.ac) return;
+      this.d.out.gain.setTargetAtTime(0, this.ac.currentTime, 0.09);
+      if (this.pending) this.pending.cancel();
+      this.pending = null; this.ringing.forEach(c => c.cancel()); this.ringing = [];
+      pomoChime.drop(); ticker.sync();
+      clearTimeout(this.offTimer);
+      this.offTimer = setTimeout(() => { if (!this.on && this.ac) this.ac.suspend().catch(() => {}); }, 700);
+    }
+  },
+  update(glide) {
+    if (!this.ac) return;
+    this.d.apply(SP, glide || 0.06);
+    if (this.on) this.d.out.gain.setTargetAtTime(this.level(), this.ac.currentTime, 0.05);
+  },
+  /* The finish tone is placed on the audio clock ahead of time, so it lands on zero even when
+     this tab is in the background and its timers are being throttled. */
+  syncChime() {
+    if (!this.on || !this.ac) return;
+    const t = this.ac.currentTime, p = this.pending;
+    if (p) {
+      if (t < p.when - 0.02) p.cancel(); else { this.ringing.push(p); this.doneFor = p.key; }
+      this.pending = null;
+    }
+    if (cd.status === 'running' && this.doneFor !== cd.endAt) {
+      this.pending = chime(this.ac, this.d.out, midiHz(SP.root), t + Math.max(0, cd.endAt - Date.now()) / 1000);
+      this.pending.key = cd.endAt;
+    }
+  },
+  finish() {
+    if (!this.on || !this.ac) return;
+    const t = this.ac.currentTime, p = this.pending; this.pending = null;
+    if (this.doneFor === cd.endAt) { if (p) p.cancel(); return; }
+    this.doneFor = cd.endAt;
+    this.ringing = this.ringing.filter(c => t - c.when < 22);
+    if (p && t >= p.when - 0.35) { this.ringing.push(p); return; }      // already sounding
+    if (p) p.cancel();
+    this.ringing.push(chime(this.ac, this.d.out, midiHz(SP.root), t + 0.03));
+  },
+  resync() {
+    const p = this.pending;
+    if (!this.on || !p || cd.status !== 'running') return;
+    const t = this.ac.currentTime, want = t + (cd.endAt - Date.now()) / 1000;
+    if (t < p.when - 0.5 && Math.abs(want - p.when) > 0.12) this.syncChime();
+  }
+};
+
+/* Pomodoro tones: the same soft bell at the end of every period, placed on the audio clock one
+   period ahead. The bell that ends a rest sits a fifth higher, so the ear can tell the two apart.
+   This keeps its own schedule and never touches the countdown's. */
+const pomoChime = {
+  pending: null, doneKey: -1,
+  tone(rest, when) { return chime(sound.ac, sound.d.out, midiHz(SP.root) * (rest ? 1.5 : 1), when); },
+  sync(force) {
+    if (!sound.on || !sound.ac) return;
+    const t = sound.ac.currentTime, nb = pmNextBoundary(), p = this.pending;
+    const when = nb ? t + Math.max(0, nb.key - Date.now()) / 1000 : 0;
+    if (p) {
+      if (t >= p.when - 0.02) { sound.ringing.push(p); this.doneKey = p.key; }             // it has rung
+      else if (force || !nb || nb.key !== p.key || Math.abs(when - p.when) > 0.12) p.cancel();
+      else return;                                                                          // still right
+      this.pending = null;
+    }
+    if (nb && nb.key !== this.doneKey) { this.pending = this.tone(nb.rest, when); this.pending.key = nb.key; }
+  },
+  passed(key, rest) {                 // a period ended: make sure its bell rang exactly once
+    if (!sound.on || !sound.ac || this.doneKey === key) return;
+    const t = sound.ac.currentTime, p = this.pending;
+    sound.ringing = sound.ringing.filter(c => t - c.when < 22);
+    this.doneKey = key;
+    if (p && p.key === key) {
+      this.pending = null;
+      if (t >= p.when - 0.35) { sound.ringing.push(p); return; }
+      p.cancel();
+    }
+    if (Date.now() - key < 2500) sound.ringing.push(this.tone(rest, t + 0.03));
+  },
+  drop() { if (this.pending) this.pending.cancel(); this.pending = null; }
+};
+
+/* Which clock is on screen, whether it is counting, and when it will stop by itself.
+   ref is a wall-clock instant that lies exactly on one of its second boundaries. */
+function runState() {
+  if (mode === 'clock') return { on: true, ref: 0, end: Infinity, slow: false };
+  if (mode === 'countdown') return { on: cd.status === 'running', ref: cd.endAt, end: cd.endAt, slow: cd.status === 'finished' };
+  if (mode === 'stopwatch') return { on: sw.status === 'running', ref: sw.startAt - sw.acc, end: Infinity, slow: false };
+  if (mode === 'season') { const on = SEASON2 > Date.now(); return { on: on, ref: SEASON2, end: SEASON2, slow: !on }; }
+  const ref = pomo.startAt - pomo.acc;
+  return { on: pomo.status === 'running', ref: ref, end: ref + pmTotal(), slow: pomo.status === 'finished' };
+}
+
+/* The tick is two soft, short struck notes in the key of the drone: an octave of the root, then
+   the fifth above it, one per second. They are rendered once into a two-second loop. */
+function tickBuffer(ac, rootHz) {
+  const sr = ac.sampleRate, buf = ac.createBuffer(1, Math.round(sr * 2), sr), d = buf.getChannelData(0);
+  let base = rootHz; while (base < 190) base *= 2;
+  const strike = (at, f) => {
+    const n0 = Math.round(at * sr), n = Math.min(d.length - n0, Math.round(sr * 0.45));
+    for (let i = 0; i < n; i++) {
+      const t = i / sr, a = Math.min(1, t / 0.003);
+      d[n0 + i] += a * (Math.exp(-t / 0.05) * Math.sin(TAU * f * t) + 0.3 * Math.exp(-t / 0.022) * Math.sin(TAU * f * 2 * t) + 0.1 * Math.exp(-t / 0.01) * Math.sin(TAU * f * 3 * t));
+    }
+  };
+  strike(0, base); strike(1, base * 1.5);
+  return buf;
+}
+
+/* Opens and closes the gate with the clock on screen, and keeps the tick loop locked to that
+   clock's seconds. Both are placed on the audio clock, so they hold in a background tab. */
+const ticker = {
+  key: 'off', src: null, env: null, buf: null, bufRoot: -1, t0: 0, e0: 0,
+  sync() {
+    if (!sound.ac) return;
+    const ac = sound.ac, t = ac.currentTime, now = Date.now(), rs = runState(), on = sound.on && rs.on;
+    const key = on ? mode + '|' + rs.ref + '|' + rs.end + '|' + SP.root : 'off';
+    if (key === this.key && (!on || Math.abs(t - (now - this.e0) / 1000 - this.t0) < 0.06)) return;   // unchanged and still in step
+    if (key !== this.key) {
+      const g = sound.d.gate.gain;
+      g.cancelScheduledValues(t);
+      if (on) {
+        g.setTargetAtTime(1, t, 0.35);
+        if (isFinite(rs.end)) g.setTargetAtTime(0, t + Math.max(0, rs.end - now) / 1000, 1.6);       // at zero the drone settles under the bell
+      } else g.setTargetAtTime(0, t, rs.slow ? 1.6 : 0.2);
+      this.key = key;
+    }
+    this.halt(t);
+    this.t0 = t; this.e0 = now;
+    if (!on) return;
+    if (!this.buf || this.bufRoot !== SP.root) { this.buf = tickBuffer(ac, midiHz(SP.root)); this.bufRoot = SP.root; }
+    let nb = rs.ref + Math.ceil((now - rs.ref) / 1000) * 1000;      // the next second boundary
+    if (nb - now < 40) nb += 1000;
+    if (nb >= rs.end - 50) return;                                  // nothing left to tick
+    const when = t + (nb - now) / 1000;
+    const src = ac.createBufferSource(), env = ac.createGain();
+    src.buffer = this.buf; src.loop = true; src.connect(env); env.connect(sound.d.tickIn);
+    src.start(when, Math.abs(Math.round((nb - rs.ref) / 1000)) % 2);
+    if (isFinite(rs.end)) src.stop(t + (rs.end - now) / 1000 - 0.06);   // the bell, not a tick, marks zero
+    this.src = src; this.env = env; this.t0 = when; this.e0 = nb;
+  },
+  halt(t) {
+    if (!this.src) return;
+    this.env.gain.setTargetAtTime(0, t, 0.012);
+    try { this.src.stop(t + 0.12); } catch (e) {}
+    this.src = null; this.env = null;
+  }
+};
+
+/* ───────────────────────── glyph outlines ─────────────────────────
+   Each character is rasterised once, off screen, and its outline is traced with marching
+   squares. The strands are then generated along those outlines every frame; the font itself
+   is never drawn to the screen. */
+const FONT = '700 320px "Helvetica Neue", Helvetica, Arial, "Liberation Sans", "Nimbus Sans", Roboto, "DejaVu Sans", sans-serif';
+const G = {};                 // char → glyph
+let PITCH = 0.8;              // digit cell width, in digit heights
+const COLON = 0.36;
+
+function traceLoops(A, W, H) {
+  const thr = 128, pts = new Map(), adj = new Map();
+  const link = (a, b) => {
+    let l = adj.get(a); if (!l) adj.set(a, l = []); l.push(b);
+    l = adj.get(b); if (!l) adj.set(b, l = []); l.push(a);
+  };
+  const fr = (a, b) => { const d = b - a; return d === 0 ? 0.5 : clamp((thr - a) / d, 0, 1); };
+  for (let y = 0; y < H - 1; y++) {
+    for (let x = 0; x < W - 1; x++) {
+      const i = y * W + x, a = A[i], b = A[i + 1], c = A[i + W + 1], d = A[i + W];
+      const idx = (a >= thr ? 8 : 0) | (b >= thr ? 4 : 0) | (c >= thr ? 2 : 0) | (d >= thr ? 1 : 0);
+      if (idx === 0 || idx === 15) continue;
+      const T = i * 2, B = (i + W) * 2, L = i * 2 + 1, R = (i + 1) * 2 + 1;
+      const eT = () => { if (!pts.has(T)) pts.set(T, [x + fr(a, b), y]); return T; };
+      const eB = () => { if (!pts.has(B)) pts.set(B, [x + fr(d, c), y + 1]); return B; };
+      const eL = () => { if (!pts.has(L)) pts.set(L, [x, y + fr(a, d)]); return L; };
+      const eR = () => { if (!pts.has(R)) pts.set(R, [x + 1, y + fr(b, c)]); return R; };
+      switch (idx) {
+        case 1: case 14: link(eL(), eB()); break;
+        case 2: case 13: link(eB(), eR()); break;
+        case 3: case 12: link(eL(), eR()); break;
+        case 4: case 11: link(eT(), eR()); break;
+        case 6: case 9:  link(eT(), eB()); break;
+        case 7: case 8:  link(eT(), eL()); break;
+        case 5:  link(eT(), eL()); link(eB(), eR()); break;
+        case 10: link(eT(), eR()); link(eB(), eL()); break;
+      }
+    }
+  }
+  const loops = [], seen = new Set();
+  adj.forEach((_, start) => {
+    if (seen.has(start)) return;
+    const loop = []; let prev = -1, cur = start, guard = 0;
+    while (guard++ < 400000) {
+      seen.add(cur); loop.push(pts.get(cur));
+      const nb = adj.get(cur);
+      const nxt = nb[0] !== prev ? nb[0] : nb[1];
+      if (nxt === undefined || nxt === start || seen.has(nxt)) break;
+      prev = cur; cur = nxt;
+    }
+    if (loop.length >= 12) loops.push(loop);
+  });
+  return loops;
+}
+
+/* Resample a closed polyline to even spacing, smooth it, and work out its outward normals. */
+function makeContour(xs, ys, ink) {
+  const m = xs.length, cum = new Float64Array(m + 1);
+  for (let i = 0; i < m; i++) { const j = (i + 1) % m; cum[i + 1] = cum[i] + Math.hypot(xs[j] - xs[i], ys[j] - ys[i]); }
+  const n = Math.max(24, Math.round(cum[m] / 0.011));
+  let X = new Float32Array(n), Y = new Float32Array(n);
+  for (let i = 0, k = 0; i < n; i++) {
+    const d = cum[m] * i / n;
+    while (k < m - 1 && cum[k + 1] < d) k++;
+    const f = (d - cum[k]) / ((cum[k + 1] - cum[k]) || 1), j = (k + 1) % m;
+    X[i] = xs[k] + (xs[j] - xs[k]) * f; Y[i] = ys[k] + (ys[j] - ys[k]) * f;
+  }
+  for (let pass = 0; pass < 3; pass++) {
+    const X2 = new Float32Array(n), Y2 = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = (i + n - 1) % n, b = (i + 1) % n;
+      X2[i] = (X[a] + 2 * X[i] + X[b]) / 4; Y2[i] = (Y[a] + 2 * Y[i] + Y[b]) / 4;
+    }
+    X = X2; Y = Y2;
+  }
+  const NX = new Float32Array(n), NY = new Float32Array(n);
+  let L = 0, cx = 0, cy = 0;
+  for (let i = 0; i < n; i++) {
+    const a = (i + n - 1) % n, b = (i + 1) % n;
+    const tx = X[b] - X[a], ty = Y[b] - Y[a], l = Math.hypot(tx, ty) || 1;
+    NX[i] = ty / l; NY[i] = -tx / l;
+    L += Math.hypot(X[b] - X[i], Y[b] - Y[i]); cx += X[i]; cy += Y[i];
+  }
+  cx /= n; cy /= n;
+  if (ink) {                                    // point every normal away from the solid part of the glyph
+    let votes = 0;
+    for (let i = 0; i < n; i += 2) votes += ink(X[i] + NX[i] * 0.03, Y[i] + NY[i] * 0.03) ? 1 : -1;
+    if (votes > 0) for (let i = 0; i < n; i++) { NX[i] = -NX[i]; NY[i] = -NY[i]; }
+  }
+  let toward = 0;
+  for (let i = 0; i < n; i++) toward += NX[i] * (cx - X[i]) + NY[i] * (cy - Y[i]);
+  // how thick the solid stroke is behind each outline point; strands use it to weave across the stroke
+  let TH = new Float32Array(n).fill(0.16);
+  if (ink) {
+    for (let i = 0; i < n; i++) {
+      let d = 0.012;
+      while (d < 0.3 && ink(X[i] - NX[i] * d, Y[i] - NY[i] * d)) d += 0.006;
+      TH[i] = clamp(d, 0.05, 0.3);
+    }
+    for (let pass = 0; pass < 6; pass++) {
+      const T2 = new Float32Array(n);
+      for (let i = 0; i < n; i++) T2[i] = (TH[(i + n - 1) % n] + 2 * TH[i] + TH[(i + 1) % n]) / 4;
+      TH = T2;
+    }
+  }
+  return { x: X, y: Y, nx: NX, ny: NY, th: TH, n: n, L: L, inner: toward > 0, off: 0 };
+}
+
+function circleContour(cx, cy, r) {
+  const n = Math.max(24, Math.round(TAU * r / 0.011));
+  const X = new Float32Array(n), Y = new Float32Array(n), NX = new Float32Array(n), NY = new Float32Array(n);
+  for (let i = 0; i < n; i++) { const a = TAU * i / n; NX[i] = Math.cos(a); NY[i] = Math.sin(a); X[i] = cx + r * NX[i]; Y[i] = cy + r * NY[i]; }
+  return { x: X, y: Y, nx: NX, ny: NY, th: new Float32Array(n).fill(r * 0.92), n: n, L: TAU * r, inner: false, off: 0 };
+}
+
+function finishGlyph(contours, adv) {
+  contours.sort((a, b) => b.L - a.L);
+  const path = new Path2D(); let total = 0;
+  contours.forEach(c => {
+    c.off = total; total += c.L;
+    path.moveTo(c.x[0], c.y[0]);
+    for (let i = 1; i < c.n; i++) path.lineTo(c.x[i], c.y[i]);
+    path.closePath();
+  });
+  return { contours: contours, total: total, adv: adv, path: path };
+}
+
+function buildGlyphs() {
+  const EM = 320, PAD = 18;
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(EM * 1.2) + PAD * 2; c.height = Math.ceil(EM * 1.15) + PAD * 2;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  const W = c.width, H = c.height, baseY = PAD + Math.round(EM * 0.92), ox = PAD;
+  g.font = FONT; g.textBaseline = 'alphabetic'; g.textAlign = 'left'; g.fillStyle = '#fff';
+  let dh = g.measureText('7').actualBoundingBoxAscent;
+  if (!(dh > EM * 0.4)) dh = EM * 0.716;
+  let maxAdv = 0;
+  for (const ch of '0123456789AMP/S') {
+    g.clearRect(0, 0, W, H); g.fillText(ch, ox, baseY);
+    const adv = g.measureText(ch).width, img = g.getImageData(0, 0, W, H).data;
+    const A = new Uint8Array(W * H);
+    for (let i = 0; i < A.length; i++) A[i] = img[i * 4 + 3];
+    const x0 = ox + adv / 2, y0 = baseY - dh;
+    const ink = (xn, yn) => {
+      const px = Math.round(xn * dh + x0 - 0.5), py = Math.round(yn * dh + y0 - 0.5);
+      return px >= 0 && py >= 0 && px < W && py < H && A[py * W + px] >= 128;
+    };
+    const contours = traceLoops(A, W, H).map(loop => {
+      const xs = new Float64Array(loop.length), ys = new Float64Array(loop.length);
+      for (let i = 0; i < loop.length; i++) { xs[i] = (loop[i][0] + 0.5 - x0) / dh; ys[i] = (loop[i][1] + 0.5 - y0) / dh; }
+      return makeContour(xs, ys, ink);
+    }).filter(k => k.L > 0.12);
+    G[ch] = finishGlyph(contours, adv / dh);
+    if (ch >= '0' && ch <= '9') maxAdv = Math.max(maxAdv, adv / dh);
+  }
+  PITCH = maxAdv + 0.035;
+  G[':'] = finishGlyph([circleContour(0, 0.3, 0.078), circleContour(0, 0.7, 0.078)], COLON);
+  G['.'] = finishGlyph([circleContour(0, 0.9, 0.095)], 0.36);
+}
+
+/* ───────────────────────── filament renderer ───────────────────────── */
+const NOISE = new Float32Array(4096);
+{ const r = mulberry32(0x9e3779b9); for (let i = 0; i < 4096; i++) NOISE[i] = r() * 2 - 1; }
+function noise2(x, y) {                         // smooth value noise, roughly [-1, 1]
+  const xi = Math.floor(x), yi = Math.floor(y);
+  let fx = x - xi, fy = y - yi;
+  fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+  const x0 = xi & 63, x1 = (xi + 1) & 63, r0 = (yi & 63) << 6, r1 = ((yi + 1) & 63) << 6;
+  const a = NOISE[r0 + x0], b = NOISE[r0 + x1], c = NOISE[r1 + x0], d = NOISE[r1 + x1];
+  const top = a + (b - a) * fx, bot = c + (d - c) * fx;
+  return top + (bot - top) * fy;
+}
+
+const cv = $('view'), stage = $('stage'), statusEl = $('status');
+const ctx = cv.getContext('2d', { alpha: false });
+const POOL = 110, CORES = 6, DENSITY = 15;
+const NC = 4, NA = 6, NL = 3, NB = NC * NA * NL;
+const COLORS = ['255,74,10', '255,122,20', '255,172,52', '255,226,150'];   // ember → orange → amber → gold
+const ALPHA = [0.1, 0.17, 0.27, 0.4, 0.58, 0.84];
+const buckets = [];
+for (let c = 0; c < NC; c++) for (let a = 0; a < NA; a++) for (let l = 0; l < NL; l++)
+  buckets.push({ style: 'rgba(' + COLORS[c] + ',' + ALPHA[a] + ')', d: new Float32Array(7 * 512), n: 0, lx: NaN, ly: NaN });
+
+function seg(bi, x0, y0, qx, qy, x1, y1) {
+  const B = buckets[bi];
+  if ((B.n + 1) * 7 > B.d.length) { const d = new Float32Array(B.d.length * 2); d.set(B.d); B.d = d; }
+  const o = B.n * 7, d = B.d;
+  d[o] = (x0 === B.lx && y0 === B.ly) ? 0 : 1;
+  d[o + 1] = x0; d[o + 2] = y0; d[o + 3] = qx; d[o + 4] = qy; d[o + 5] = x1; d[o + 6] = y1;
+  B.lx = x1; B.ly = y1; B.n++;
+}
+/* Strands in different buckets add up where they cross, which is what makes the bright knots. */
+function flush(lineWidth) {
+  ctx.lineWidth = lineWidth; ctx.lineCap = 'butt'; ctx.lineJoin = 'round';
+  for (let b = 0; b < NB; b++) {
+    const B = buckets[b], n = B.n; if (!n) continue;
+    const d = B.d;
+    ctx.strokeStyle = B.style; ctx.beginPath();
+    for (let i = 0, o = 0; i < n; i++, o += 7) {
+      if (d[o]) ctx.moveTo(d[o + 1], d[o + 2]);
+      ctx.quadraticCurveTo(d[o + 3], d[o + 4], d[o + 5], d[o + 6]);
+    }
+    ctx.stroke();
+    B.n = 0; B.lx = NaN; B.ly = NaN;
+  }
+}
+
+function spawn(s, R, t, stagger) {
+  if (s.core) {                                   // a faint full loop that keeps the numeral steady
+    s.T = 18 + R() * 20; s.len = 99; s.u = R(); s.drift = (R() < 0.5 ? -1 : 1) * (0.01 + R() * 0.02);
+    s.bias = (R() - 0.5) * 0.01; s.a1 = 0.008 + R() * 0.006; s.a2 = 0.003; s.rc = 0; s.kind = 0;
+    s.alpha = 0.55; s.temp = 0.12 + R() * 0.15; s.fd = 0.12;
+  } else {
+    s.T = 3 + R() * 6; s.u = R(); s.len = 0.22 + R() * R() * 1.25;
+    s.drift = (R() < 0.5 ? -1 : 1) * (0.008 + R() * 0.05);
+    s.bias = (R() + R() + R() - 1.5) / 1.5 * 0.02 - (R() < 0.16 ? 0.02 + R() * 0.06 : 0);
+    s.a1 = 0.012 + R() * 0.04; s.a2 = 0.004 + R() * 0.012;
+    if (R() < 0.42) {                             // some strands coil as they travel
+      s.lc = 0.05 + R() * 0.09; s.kc = TAU / s.lc; s.rc = s.lc / TAU * (0.6 + R() * 1.3);
+      s.wc = (R() < 0.5 ? -1 : 1) * (0.4 + R() * 1.6); s.pc = R() * TAU;
+    } else s.rc = 0;
+    s.alpha = 0.4 + R() * 0.6; s.temp = R() * 0.42; s.fd = 0.1 + R() * 0.22;
+    // 0 hugs the outline · 1 a tail that lifts off · 2 a bow that arcs out · 3 winds across the stroke · 4 wanders loosely
+    const k = R(); s.kind = k < 0.09 ? 1 : k < 0.15 ? 2 : k < 0.57 ? 3 : k < 0.66 ? 4 : 0;
+    if (s.kind === 3) {
+      s.len = 0.45 + R() * 1.2; s.rc = 0; s.a1 *= 0.45; s.bias *= 0.4; s.alpha *= 0.82;
+      s.kw = TAU / (0.16 + R() * 0.34); s.ww = (R() < 0.5 ? -1 : 1) * (0.2 + R() * 0.9); s.wd = 0.7 + R() * 0.38;
+    } else if (s.kind === 4) {
+      s.len = 0.5 + R(); s.a1 = 0.07 + R() * 0.09; s.alpha *= 0.5;
+    }
+  }
+  s.tb = stagger ? t - R() * s.T : t;
+  s.f1 = (s.kind === 4 ? 1.2 : 2.5) + R() * (s.kind === 4 ? 2 : 5); s.w1 = 0.15 + R() * 0.5; s.p1 = R() * 50; s.q1 = R() * 50;
+  s.f2 = 9 + R() * 14; s.w2 = 0.4 + R() * 0.9; s.p2 = R() * 50; s.q2 = R() * 50;
+  s.F = 0.07 + R() * R() * 0.3; s.rev = R() < 0.5; s.sw = 0.3 + R() * 0.8; s.p3 = R() * 50;
+  s.fw = 1.2 + R() * 4; s.fp = R() * TAU;
+  s.fb = 1.5 + R() * 4; s.wb = 0.2 + R() * 0.7; s.pb = R() * 50;
+  s.layer = (R() * NL) | 0; s.env = 0;
+}
+function makeCell(seed, fast) {
+  const R = mulberry32(seed);
+  const cell = { ch: ' ', prev: ' ', tc: -9, fast: !!fast, R: R, hp: R() * 40, hq: R() * 40, strands: [] };
+  for (let i = 0; i < POOL; i++) { const s = { core: i < CORES }; spawn(s, R, 0, true); cell.strands.push(s); }
+  return cell;
+}
+const mainCells = [], subCells = [];
+for (let i = 0; i < 12; i++) mainCells.push(makeCell(1013 + i * 7919, false));   // up to 99999:59:59
+for (let i = 0; i < 5; i++) subCells.push(makeCell(52361 + i * 104729, i < 2));
+
+let animT = 0, speed = 1, inten = 1, flare = 1, rowShift = 0;
+let pxScale = 1, quality = 1, resScale = 1, qLock = false;
+const PX = new Float32Array(200), PY = new Float32Array(200), PI = new Float32Array(200), PT = new Float32Array(200);
+
+const kind3 = s => s.kind === 3;
+function glyphPass(cell, gl, cx, top, H, alpha, loosen, rise, detail) {
+  const cs = gl.contours, nC = cs.length;
+  if (alpha < 0.015 || !nC) return;
+  // a trace of translucent body, so the hollow shape reads as glass rather than wire
+  ctx.globalAlpha = 0.03 * alpha; ctx.setTransform(H, 0, 0, H, cx, top - rise * H);
+  ctx.fill(gl.path, 'evenodd');
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalAlpha = 1;
+
+  const t = animT, strands = cell.strands, hp = cell.hp, hq = cell.hq;
+  const nCore = Math.min(CORES, nC * 2);
+  const nReg = Math.min(POOL - CORES, Math.round(gl.total * DENSITY * detail));
+  const stepBase = Math.max(0.017, 3.4 / H);
+  for (let k = 0; k < nCore + nReg; k++) {
+    const s = strands[k < nCore ? k : CORES + k - nCore];
+    let a0 = s.alpha * s.env * alpha * (1 - s.fd * (0.5 + 0.5 * Math.sin(s.fw * t + s.fp)));
+    if (a0 < 0.02) continue;
+    let c, startArc;
+    if (s.core) { c = cs[k % nC]; startArc = s.u * c.L; }
+    else {
+      let u = s.u * gl.total, ci = 0;
+      while (ci < nC - 1 && u >= cs[ci].L) { u -= cs[ci].L; ci++; }
+      c = cs[ci]; startArc = u;
+    }
+    const L = c.L, N = c.n, inv = N / L, X = c.x, Y = c.y, NX = c.nx, NY = c.ny, TH = c.th;
+    const small = Math.min(1, L / 1.6);
+    if (c.inner) a0 *= 0.6 + 0.4 * small;
+    const len = Math.min(s.len, s.core ? L : L * 0.92);
+    let step = stepBase;
+    if (s.rc > 0) step = Math.min(step, Math.max(s.lc / 8, 2 / H));
+    else if (kind3(s)) step = Math.min(step, Math.max(TAU / s.kw / 10, 2 / H));
+    let n = Math.ceil(len / step); if (n < 6) n = 6; else if (n > 190) n = 190;
+    const start = startArc + s.drift * (t - s.tb);
+    const kind = s.kind, F = s.F * flare * (c.inner ? 0.3 : 1) * small * small, rc = s.rc * loosen * small * 1.7;
+    const lift = rise * (0.5 + s.temp * 1.2);
+    for (let j = 0; j <= n; j++) {
+      const f = j / n, sj = start + len * f;
+      let idf = sj * inv; idf -= Math.floor(idf / N) * N;
+      const i0 = idf | 0, fr = idf - i0, i1 = i0 + 1 >= N ? 0 : i0 + 1;
+      const nx = NX[i0] + (NX[i1] - NX[i0]) * fr, ny = NY[i0] + (NY[i1] - NY[i0]) * fr;
+      let o = s.bias + (s.a1 * noise2(sj * s.f1 + s.p1, t * s.w1 + s.q1) + s.a2 * noise2(sj * s.f2 + s.p2, t * s.w2 + s.q2)) * loosen;
+      let fade = 1;
+      if (kind === 3) {                           // wind between the two edges of the stroke, like wire round a tube
+        const wob = noise2(sj * 1.4 + s.p1, t * 0.2 + s.q2);       // keeps the winding from looking machined
+        const ph = sj * s.kw + t * s.ww + s.p3 + wob * 2.8;
+        o -= (TH[i0] + (TH[i1] - TH[i0]) * fr) * s.wd * (0.86 + 0.3 * wob) * (0.5 - 0.5 * Math.cos(ph));
+        fade = 0.62 + 0.38 * (0.5 + 0.5 * Math.sin(ph));
+      }
+      let dx = nx * o, dy = ny * o;
+      if (rc > 0) {                               // coils come and go along the strand
+        const rr = rc * noise2(sj * 2.3 + s.p3, t * 0.25 + s.q2);
+        if (rr > 0) {
+          const th = sj * s.kc + t * s.wc + s.pc, cn = Math.cos(th) * rr, sn = Math.sin(th) * rr;
+          dx += nx * cn - ny * sn; dy += ny * cn + nx * sn;
+        }
+      }
+      if (kind === 1) {
+        const e = s.rev ? 1 - f : f, g2 = e * e * e, sway = noise2(e * 2.2 + s.p3, t * s.sw + s.q1);
+        dx += (nx * 0.75 + sway * 0.55) * F * g2; dy += (ny * 0.75 - 0.6) * F * g2; fade = 1 - g2 * 0.8;
+      } else if (kind === 2) {
+        const sn = Math.sin(Math.PI * f), g2 = sn * sn, sway = noise2(f * 2 + s.p3, t * s.sw + s.q1);
+        dx += (nx + sway * 0.4) * F * g2 * 0.6; dy += (ny - 0.3) * F * g2 * 0.6; fade = 1 - g2 * 0.45;
+      }
+      PX[j] = cx + (X[i0] + (X[i1] - X[i0]) * fr + dx) * H;
+      PY[j] = top + (Y[i0] + (Y[i1] - Y[i0]) * fr + dy - lift) * H;
+      const edge = Math.min(1, Math.min(f, 1 - f) * 5);
+      const bw = 0.5 + 0.5 * noise2(sj * s.fb + s.pb, t * s.wb + s.q2);
+      const heat = clamp(0.5 + 0.75 * noise2((sj + c.off) * 2.3 + hp, t * 0.22 + hq), 0, 1);
+      PI[j] = a0 * edge * fade * (0.3 + 0.7 * bw) * (0.68 + 0.8 * heat * heat) * 1.45;
+      PT[j] = s.temp * 0.9 + heat * 0.5 + bw * 0.12;
+    }
+    const layer = s.layer;
+    let mx = (PX[0] + PX[1]) * 0.5, my = (PY[0] + PY[1]) * 0.5;
+    for (let j = 1; j < n; j++) {
+      const mx2 = (PX[j] + PX[j + 1]) * 0.5, my2 = (PY[j] + PY[j + 1]) * 0.5, I = PI[j];
+      if (I >= 0.04) {
+        let al = (I * NA) | 0; if (al >= NA) al = NA - 1;
+        let cc = (PT[j] * NC) | 0; if (cc >= NC) cc = NC - 1; else if (cc < 0) cc = 0;
+        seg((cc * NA + al) * NL + layer, mx, my, PX[j], PY[j], mx2, my2);
+      }
+      mx = mx2; my = my2;
+    }
+  }
+}
+
+function drawCell(cell, ch, cx, top, H, rt, detail) {
+  if (ch !== cell.ch) { cell.prev = cell.ch; cell.ch = ch; cell.tc = rt; }
+  const strands = cell.strands, t = animT;
+  for (let i = 0; i < POOL; i++) {
+    const s = strands[i]; let life = (t - s.tb) / s.T;
+    if (life >= 1) { spawn(s, cell.R, t, life > 3); life = (t - s.tb) / s.T; }
+    s.env = life < 0.2 ? smooth(life / 0.2) : life > 0.7 ? smooth((1 - life) / 0.3) : 1;
+  }
+  // A digit that changes dissolves upward and loosens while the new one condenses in its place.
+  const m = (rt - cell.tc) / (cell.fast ? 0.1 : 0.45);
+  if (m < 1) {
+    const e = smooth(clamp(m, 0, 1));
+    if (cell.prev !== ' ') glyphPass(cell, G[cell.prev], cx, top, H, (1 - e) * inten, 1 + 2.4 * e, 0.06 * e, detail);
+    if (cell.ch !== ' ') glyphPass(cell, G[cell.ch], cx, top, H, e * inten, 1 + 1.8 * (1 - e), 0, detail);
+  } else if (cell.ch !== ' ') glyphPass(cell, G[cell.ch], cx, top, H, inten, 1, 0, detail);
+}
+
+/* Soft glow: the frame is halved five times, then added back on itself, finer levels counting most. */
+const LEVELS = 5, SPREAD = 0.8, GLOW = 0.66;
+let blooms = [];
+function bloom() {
+  let src = cv;
+  for (let i = 0; i < LEVELS; i++) {
+    const b = blooms[i], x = b.x;
+    x.globalCompositeOperation = 'copy'; x.globalAlpha = 1;
+    x.drawImage(src, 0, 0, b.c.width, b.c.height); src = b.c;
+  }
+  for (let i = LEVELS - 1; i > 0; i--) {
+    const hi = blooms[i - 1], x = hi.x;
+    x.globalCompositeOperation = 'lighter'; x.globalAlpha = SPREAD;
+    x.drawImage(blooms[i].c, 0, 0, hi.c.width, hi.c.height);
+  }
+  ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = GLOW;
+  ctx.drawImage(blooms[0].c, 0, 0, cv.width, cv.height);
+  ctx.globalAlpha = 1;
+}
+
+function resize() {
+  const r = stage.getBoundingClientRect(), cw = Math.max(40, r.width), ch = Math.max(40, r.height);
+  let s = Math.min(window.devicePixelRatio || 1, 3);
+  const budget = 3.4e6 * resScale;
+  if (cw * ch * s * s > budget) s = Math.sqrt(budget / (cw * ch));
+  const w = Math.round(cw * s), h = Math.round(ch * s);
+  if (w === cv.width && h === cv.height) return;
+  cv.width = w; cv.height = h; pxScale = w / cw;
+  blooms = [];
+  for (let i = 0, bw = w, bh = h; i < LEVELS; i++) {
+    bw = Math.max(1, Math.ceil(bw / 2)); bh = Math.max(1, Math.ceil(bh / 2));
+    const c = document.createElement('canvas'); c.width = bw; c.height = bh;
+    blooms.push({ c: c, x: c.getContext('2d', { alpha: false }) });
+  }
+  labelKey = '';
+}
+
+let labelKey = '', frameDt = 0.016, rowW = 0, rowMode = '', layout = {};
+function drawFrame(rt) {
+  const W = cv.width, Hh = cv.height, s = pxScale, P = PITCH, str = V.main, n = str.length;
+  let want = 0;
+  for (let i = 0; i < n; i++) want += str[i] === ':' ? COLON : P;
+  // When the row changes length within a mode (Season 2 dropping an hours digit) it eases to its
+  // new size; on a mode change it snaps, since every digit is changing then anyway.
+  if (rowMode !== mode || !rowW) { rowW = want; rowMode = mode; }
+  else rowW += (want - rowW) * Math.min(1, frameDt * 4);
+  const ref = rowW;
+  const H = Math.max(10, Math.min((W - 32 * s) / (ref + 0.2), (Hh - 12 * s) / 2.44));
+  const top = (Hh - H) / 2, hs = H * 0.36, subTop = top + H * 1.22;
+  const right = (W + ref * H) / 2 - rowShift * P * H / 2;
+
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, Hh);
+  ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = 'rgb(255,104,18)';
+
+  const lw = clamp(H * 0.005, 0.6 * s, 1.3 * s);
+  const detail = quality * clamp(H / 400, 0.5, 1);
+  let x = right, first = right;
+  for (let k = 0; k < mainCells.length; k++) {
+    // cells beyond the string are blank; a digit that just left dissolves where it stood
+    const ch = k < n ? str[n - 1 - k] : ' ', w = (ch === ':' ? COLON : P) * H;
+    drawCell(mainCells[k], ch, x - w / 2, top, H, rt, detail);
+    x -= w;
+    if (k === n - 1) first = x;
+  }
+  flush(lw);
+
+  let xr = right - 0.03 * H;
+  const sub = V.sub, sd = quality * clamp(hs / 400, 0.42, 1);
+  for (let k = 0; k < 5; k++) {
+    const ch = sub.length - 1 - k >= 0 ? sub[sub.length - 1 - k] : ' ';
+    const w = ch === ' ' ? 0 : (G[ch].adv + 0.08) * hs;
+    drawCell(subCells[k], ch, xr - w / 2, subTop, hs, rt, sd);
+    xr -= w;
+  }
+  flush(Math.max(0.5 * s, lw * 0.75));
+  bloom();
+  layout.subLeft = xr / s; layout.rowLeft = first / s; layout.rowRight = right / s; layout.H = H / s;
+
+  // the small status line sits under the first digit, level with the small readout on the right
+  const lx = Math.round((first + rowShift * P * H + 0.07 * H) / s), ly = Math.round((subTop + hs / 2) / s);
+  const fs = Math.round(clamp(H / s * 0.085, 11, 15));
+  const key = lx + '|' + ly + '|' + fs;
+  if (key !== labelKey) { labelKey = key; statusEl.style.left = lx + 'px'; statusEl.style.top = ly + 'px'; statusEl.style.fontSize = fs + 'px'; }
+}
+
+let lastTs = 0, ema = 0.016, slowFor = 0, lastSr = '';
+function frame(ts) {
+  requestAnimationFrame(frame);
+  const raw = (ts - lastTs) / 1000; lastTs = ts;
+  const dt = clamp(raw, 0, 0.08), rt = ts / 1000;
+  cdCheck(); pmCheck();
+  computeView(Date.now(), rt);
+  const k = Math.min(1, dt * 3.5);
+  speed += (V.speed - speed) * k; inten += (V.inten - inten) * k; flare += (V.flare - flare) * k;
+  rowShift += (V.lead - rowShift) * Math.min(1, dt * 6);
+  animT += dt * speed;
+  frameDt = dt;
+  drawFrame(rt);
+  if (V.main !== lastSr) { lastSr = V.main; $('srTime').textContent = srText(); }
+  // ease off on detail, then resolution, if this device cannot keep up
+  if (!qLock && raw > 0 && raw < 0.25) {
+    ema = ema * 0.92 + raw * 0.08;
+    if (ema > 0.027) {
+      slowFor += raw;
+      if (slowFor > 1.5) {
+        slowFor = 0;
+        if (quality > 0.5) quality = Math.max(0.5, quality - 0.12);
+        else if (resScale > 0.45) { resScale -= 0.2; resize(); }
+      }
+    } else slowFor = Math.max(0, slowFor - raw * 0.5);
+  }
+}
+
+/* ───────────────────────── interface ───────────────────────── */
+const els = {
+  app: $('app'), cdH: $('cdH'), cdM: $('cdM'), cdS: $('cdS'), cdGo: $('cdGo'), cdReset: $('cdReset'),
+  swGo: $('swGo'), swReset: $('swReset'), fmt12: $('fmt12'), fmt24: $('fmt24'),
+  soundToggle: $('soundToggle'), soundToggle2: $('soundToggle2'), tune: $('tuneToggle'), fs: $('fsToggle'),
+  panel: $('soundPanel'), presets: $('presets'), hint: $('soundHint')
+};
+const modeBtns = { countdown: $('modeCountdown'), clock: $('modeClock'), stopwatch: $('modeStopwatch'), pomodoro: $('modePomodoro'), season: $('modeSeason') };
+const panels = { countdown: $('panelCountdown'), clock: $('panelClock'), stopwatch: $('panelStopwatch'), pomodoro: $('panelPomodoro'), season: $('panelSeason') };
+const MODE_NAME = { countdown: 'Countdown', clock: 'Clock', stopwatch: 'Stopwatch', pomodoro: 'Pomodoro', season: 'Season 2' };
+const pm = { work: $('pmWork'), rest: $('pmRest'), sessions: $('pmSessions'), go: $('pmGo'), skip: $('pmSkip'), reset: $('pmReset') };
+const BASE_TITLE = document.title || 'Filament Timekeeper';
+
+function srText() { return MODE_NAME[mode] + ' ' + V.main.trim() + (mode === 'clock' && V.sub ? ' ' + V.sub : ''); }
+function timeLabel(ms) {
+  try { return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: hour12 }).format(new Date(ms)); }
+  catch (e) { return ''; }
+}
+function statusText() {
+  if (mode === 'countdown') {
+    if (cd.status === 'finished') return "Time's up";
+    if (cd.status === 'paused') return 'Paused';
+    if (cd.status === 'running') return cd.dur < 72e6 ? 'Ends ' + timeLabel(cd.endAt) : '';
+    return cd.dur <= 0 ? 'Set a duration' : '';
+  }
+  if (mode === 'stopwatch') return sw.status === 'paused' ? 'Paused' : '';
+  if (mode === 'pomodoro') return pmStatusText();
+  if (mode === 'season') return seasonStatus();
+  try { return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric' }).format(new Date()); }
+  catch (e) { return ''; }
+}
+
+let saveTimer = 0;
+function save() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem('filament-timekeeper/1', JSON.stringify({
+        mode: mode, hour12: hour12, cd: cd, sw: sw, pomo: pomo, sound: SP
+      }));
+    } catch (e) {}
+  }, 200);
+}
+function restore(data) {
+  if (!data || typeof data !== 'object') return;
+  if (MODE_NAME[data.mode]) mode = data.mode;
+  if (typeof data.hour12 === 'boolean') hour12 = data.hour12;
+  const c = data.cd, w = data.sw, now = Date.now();
+  if (c && Array.isArray(c.parts)) {
+    cdSetParts(clamp(c.parts[0] | 0, 0, 99), clamp(c.parts[1] | 0, 0, 59), clamp(c.parts[2] | 0, 0, 59));
+    if (c.status === 'running' && c.endAt > now - 36e5 && c.endAt < now + 36e7) { cd.status = 'running'; cd.endAt = c.endAt; }
+    else if (c.status === 'paused' && c.remain > 0 && c.remain <= 36e7) { cd.status = 'paused'; cd.remain = c.remain; }
+  }
+  if (w && (w.status === 'running' || w.status === 'paused') && w.acc >= 0 && w.acc < SW_MAX) {
+    sw.acc = +w.acc || 0;
+    if (w.status === 'running' && w.startAt <= now) { sw.status = 'running'; sw.startAt = +w.startAt; } else sw.status = 'paused';
+  }
+  const pd = data.pomo;
+  if (pd && typeof pd === 'object') {
+    if (Number.isFinite(pd.work)) pomo.work = clamp(Math.floor(pd.work), 1, 180);
+    if (Number.isFinite(pd.rest)) pomo.rest = clamp(Math.floor(pd.rest), 1, 120);
+    if (Number.isFinite(pd.sessions)) pomo.sessions = clamp(Math.floor(pd.sessions), 1, 20);
+    const T = pmTotal();
+    if (pd.status === 'running' && pd.startAt <= now && pd.acc >= 0 && pd.acc + (now - pd.startAt) < T + 36e5) {
+      pomo.status = 'running'; pomo.startAt = +pd.startAt; pomo.acc = +pd.acc; pomo.seen = pmPhase(pmElapsed(now)).i;
+    } else if (pd.status === 'paused' && pd.acc >= 0 && pd.acc < T) {
+      pomo.status = 'paused'; pomo.acc = +pd.acc; pomo.seen = pmPhase(pomo.acc).i;
+    }
+  }
+  if (data.sound) for (const k in SOUND_DEFAULT) if (typeof data.sound[k] === 'number' && isFinite(data.sound[k])) SP[k] = data.sound[k];
+}
+
+function changed() { syncUI(); syncSound(); syncWake(); ticker.sync(); save(); }
+function syncUI() {
+  for (const m in modeBtns) {
+    modeBtns[m].setAttribute('aria-pressed', String(m === mode));
+    panels[m].hidden = m !== mode;
+  }
+  const cdLive = cd.status === 'running', cdDone = cd.status === 'finished', swLive = sw.status === 'running';
+  modeBtns.countdown.classList.toggle('live', cdLive); modeBtns.countdown.classList.toggle('done', cdDone);
+  modeBtns.countdown.setAttribute('aria-label', 'Countdown' + (cdLive ? ', running' : cdDone ? ', finished' : cd.status === 'paused' ? ', paused' : ''));
+  modeBtns.stopwatch.classList.toggle('live', swLive);
+  modeBtns.stopwatch.setAttribute('aria-label', 'Stopwatch' + (swLive ? ', running' : sw.status === 'paused' ? ', paused' : ''));
+  const pmLive = pomo.status === 'running', pmDone = pomo.status === 'finished';
+  modeBtns.pomodoro.classList.toggle('live', pmLive); modeBtns.pomodoro.classList.toggle('done', pmDone);
+  modeBtns.pomodoro.setAttribute('aria-label', 'Pomodoro' + (pmLive ? ', running' : pmDone ? ', finished' : pomo.status === 'paused' ? ', paused' : ''));
+
+  els.cdGo.textContent = { idle: 'Start', running: 'Pause', paused: 'Resume', finished: 'Restart' }[cd.status];
+  els.cdGo.disabled = cd.status === 'idle' && cd.dur <= 0;
+  els.cdReset.disabled = cd.status === 'idle';
+  const lock = cd.status !== 'idle';
+  els.cdH.disabled = els.cdM.disabled = els.cdS.disabled = lock;
+  els.swGo.textContent = { idle: 'Start', running: 'Pause', paused: 'Resume' }[sw.status];
+  els.swReset.disabled = sw.status === 'idle';
+  pm.go.textContent = { idle: 'Start', running: 'Pause', paused: 'Resume', finished: 'Restart' }[pomo.status];
+  pm.reset.disabled = pomo.status === 'idle';
+  pm.skip.disabled = pomo.status !== 'running' && pomo.status !== 'paused';
+  pm.work.disabled = pm.rest.disabled = pm.sessions.disabled = pomo.status !== 'idle';
+  els.fmt12.setAttribute('aria-pressed', String(hour12)); els.fmt24.setAttribute('aria-pressed', String(!hour12));
+
+  const st = statusText();
+  if (statusEl.textContent !== st) statusEl.textContent = st;
+  const note = seasonNoteText(), noteEl = $('seasonNote');
+  if (noteEl.textContent !== note) noteEl.textContent = note;
+  statusEl.classList.toggle('hot', (mode === 'countdown' && cd.status === 'finished') || (mode === 'pomodoro' && pomo.status === 'finished') || (mode === 'season' && SEASON2 <= Date.now()));
+}
+function syncFields() {
+  els.cdH.value = cd.parts[0]; els.cdM.value = cd.parts[1]; els.cdS.value = cd.parts[2];
+  pm.work.value = pomo.work; pm.rest.value = pomo.rest; pm.sessions.value = pomo.sessions;
+}
+function syncSound() {
+  const on = sound.on;
+  els.soundToggle.textContent = on ? 'Sound on' : 'Sound off'; els.soundToggle.setAttribute('aria-pressed', String(on));
+  els.soundToggle2.textContent = on ? 'Turn off' : 'Turn on'; els.soundToggle2.setAttribute('aria-pressed', String(on));
+  const waiting = on && !runState().on;                 // on, but the clock on screen is not counting
+  els.hint.hidden = on && !waiting;
+  els.hint.textContent = waiting
+    ? 'Sound is on and plays only while the timer on screen is running. Start it, or switch to Clock.'
+    : 'Sound is off. Turn it on to hear it while a timer is running, or at any time in Clock.';
+}
+function setMode(m) { if (!MODE_NAME[m] || m === mode) return; mode = m; lastSr = ''; changed(); }
+
+/* countdown fields: whole numbers only, never negative, never past the field's range */
+function fieldValue(el) {
+  const max = +el.max, v = Math.floor(Number(el.value));
+  return Number.isFinite(v) && v > 0 ? Math.min(v, max) : 0;
+}
+[els.cdH, els.cdM, els.cdS].forEach(el => {
+  el.addEventListener('input', () => {
+    if (cd.status !== 'idle') return;
+    cdSetParts(fieldValue(els.cdH), fieldValue(els.cdM), fieldValue(els.cdS));
+    if (el.value !== '' && String(fieldValue(el)) !== el.value && (Number(el.value) > +el.max || Number(el.value) < 0)) el.value = fieldValue(el);
+    changed();
+  });
+  el.addEventListener('change', () => { el.value = fieldValue(el); });
+  el.addEventListener('blur', () => { el.value = fieldValue(el); });
+  el.addEventListener('keydown', e => { if (['-', '+', 'e', 'E', '.', ','].indexOf(e.key) >= 0) e.preventDefault(); });
+  el.addEventListener('focus', () => { try { el.select(); } catch (e) {} });
+});
+panels.countdown.addEventListener('submit', e => { e.preventDefault(); cdPrimary(); });
+els.cdReset.addEventListener('click', cdReset);
+els.swGo.addEventListener('click', swPrimary);
+els.swReset.addEventListener('click', swReset);
+els.fmt12.addEventListener('click', () => { hour12 = true; changed(); });
+els.fmt24.addEventListener('click', () => { hour12 = false; changed(); });
+for (const m in modeBtns) modeBtns[m].addEventListener('click', () => setMode(m));
+
+/* pomodoro fields: whole numbers, at least 1, never past the field's range */
+function pmFieldValue(el) {
+  const v = Math.floor(Number(el.value)), min = +el.min;
+  return Number.isFinite(v) && v >= min ? Math.min(v, +el.max) : min;
+}
+[pm.work, pm.rest, pm.sessions].forEach(el => {
+  el.addEventListener('input', () => {
+    if (pomo.status !== 'idle') return;
+    pomo.work = pmFieldValue(pm.work); pomo.rest = pmFieldValue(pm.rest); pomo.sessions = pmFieldValue(pm.sessions);
+    if (el.value !== '' && (Number(el.value) > +el.max || Number(el.value) < 0)) el.value = pmFieldValue(el);
+    changed();
+  });
+  el.addEventListener('change', () => { el.value = pmFieldValue(el); });
+  el.addEventListener('blur', () => { el.value = pmFieldValue(el); });
+  el.addEventListener('keydown', e => { if (['-', '+', 'e', 'E', '.', ','].indexOf(e.key) >= 0) e.preventDefault(); });
+  el.addEventListener('focus', () => { try { el.select(); } catch (e) {} });
+});
+panels.pomodoro.addEventListener('submit', e => { e.preventDefault(); pmPrimary(); });
+pm.skip.addEventListener('click', pmSkip);
+pm.reset.addEventListener('click', pmReset);
+
+/* sound desk */
+const SLIDERS = {
+  root: ['sRoot', 'oRoot', v => noteName(v) + ' · ' + midiHz(v).toFixed(1) + ' Hz'],
+  volume: ['sVolume', 'oVolume', v => v + '%'],
+  sub: ['sSub', 'oSub', v => v + '%'],
+  octave: ['sOctave', 'oOctave', v => v + '%'],
+  fifth: ['sFifth', 'oFifth', v => v + '%'],
+  warmth: ['sWarmth', 'oWarmth', v => v + '%'],
+  rate: ['sRate', 'oRate', v => v.toFixed(2) + ' Hz · ' + Math.round(v * 60) + ' bpm'],
+  depth: ['sDepth', 'oDepth', v => v + '%'],
+  shimmer: ['sShimmer', 'oShimmer', v => (v ? v + '%' : 'Off')],
+  tick: ['sTick', 'oTick', v => (v ? v + '%' : 'Off')]
+};
+function syncSliders() {
+  for (const k in SLIDERS) {
+    const d = SLIDERS[k], input = $(d[0]), text = d[2](SP[k]);
+    input.value = SP[k]; $(d[1]).textContent = text; input.setAttribute('aria-valuetext', text);
+  }
+  Array.prototype.forEach.call(els.presets.children, (b, i) => {
+    const p = PRESETS[i][1]; let same = true;
+    for (const k in p) if (Math.abs(p[k] - SP[k]) > 1e-6) same = false;
+    b.setAttribute('aria-pressed', String(same));
+  });
+}
+for (const k in SLIDERS) {
+  $(SLIDERS[k][0]).addEventListener('input', e => {
+    const input = e.target;
+    SP[k] = clamp(Number(input.value), +input.min, +input.max);
+    syncSliders(); sound.update(k === 'root' ? 0.12 : 0.06);
+    if (k === 'root') { sound.syncChime(); pomoChime.sync(true); ticker.sync(); }
+    save();
+  });
+}
+PRESETS.forEach(p => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'btn small'; b.textContent = p[0];
+  b.id = 'preset' + p[0].replace(/\W/g, '');
+  b.addEventListener('click', () => { Object.assign(SP, p[1]); syncSliders(); sound.update(0.25); sound.syncChime(); pomoChime.sync(true); ticker.sync(); save(); });
+  els.presets.appendChild(b);
+});
+els.soundToggle.addEventListener('click', () => sound.setOn(!sound.on));
+els.soundToggle2.addEventListener('click', () => sound.setOn(!sound.on));
+function setTuning(open) {
+  els.panel.hidden = !open; els.app.classList.toggle('tuning', open);
+  els.tune.setAttribute('aria-expanded', String(open));
+}
+els.tune.addEventListener('click', () => setTuning(els.panel.hidden));
+
+/* full screen, with the chrome fading out while idle */
+let immersive = false, idleTimer = 0;
+const fsEl = () => document.fullscreenElement || document.webkitFullscreenElement;
+function wake() {
+  document.body.classList.remove('idle'); clearTimeout(idleTimer);
+  if (!immersive) return;
+  idleTimer = setTimeout(() => {
+    const a = document.activeElement;
+    let keyboard = false;
+    try { keyboard = !!a && a !== document.body && a.matches(':focus-visible'); } catch (e) {}
+    if (immersive && !keyboard) document.body.classList.add('idle'); else wake();
+  }, 3500);
+}
+function setImmersive(v) {
+  immersive = v;
+  els.fs.textContent = v ? 'Exit full screen' : 'Full screen'; els.fs.setAttribute('aria-pressed', String(v));
+  wake(); syncWake();
+}
+async function toggleFullscreen() {
+  if (immersive) {
+    setImmersive(false);
+    try { if (fsEl()) await (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch (e) {}
+  } else {
+    setImmersive(true);       // even where the browser refuses real full screen, the page clears itself
+    const root = document.documentElement, req = root.requestFullscreen || root.webkitRequestFullscreen;
+    try { if (req) await req.call(root); } catch (e) {}
+  }
+}
+els.fs.addEventListener('click', toggleFullscreen);
+['fullscreenchange', 'webkitfullscreenchange'].forEach(n => document.addEventListener(n, () => { if (!fsEl() && immersive) setImmersive(false); }));
+['pointermove', 'pointerdown', 'keydown', 'touchstart', 'focusin'].forEach(n => document.addEventListener(n, wake, { passive: true }));
+
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target, tag = t && t.tagName;
+  if (e.key === 'Escape') {
+    if (immersive && !fsEl()) setImmersive(false);
+    else if (!els.panel.hidden) { setTuning(false); els.tune.focus(); }
+    return;
+  }
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  const key = e.key.toLowerCase();
+  if (key === ' ') {
+    if (tag === 'BUTTON') return;
+    if (mode === 'countdown') cdPrimary(); else if (mode === 'stopwatch') swPrimary(); else if (mode === 'pomodoro') pmPrimary(); else return;
+    e.preventDefault();
+  } else if (key === 'r') { if (mode === 'countdown') cdReset(); else if (mode === 'stopwatch') swReset(); else if (mode === 'pomodoro') pmReset(); }
+  else if (key === 'f') toggleFullscreen();
+  else if (key === 'm') sound.setOn(!sound.on);
+  else if (key === '1') setMode('countdown');
+  else if (key === '2') setMode('clock');
+  else if (key === '3') setMode('stopwatch');
+  else if (key === '4') setMode('pomodoro');
+  else if (key === '5') setMode('season');
+});
+
+/* keep the screen awake while something is running or the page is full screen */
+let wakeLock = null;
+async function syncWake() {
+  const want = document.visibilityState === 'visible' && (immersive || cd.status === 'running' || sw.status === 'running' || pomo.status === 'running');
+  try {
+    if (want && !wakeLock && navigator.wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!want && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+  } catch (e) { wakeLock = null; }
+}
+
+/* a slow timer covers what animation frames cannot do in a background tab */
+function tick() {
+  cdCheck(); pmCheck(); seasonCheck(); sound.resync(); pomoChime.sync(); ticker.sync();
+  const t = Date.now(), pmT = pmTitleText(t); let title = BASE_TITLE;
+  if (mode === 'season') title = SEASON2 > t ? longHms(Math.ceil((SEASON2 - t) / 1000)) + ' · Season 2' : 'Season 2 is out';
+  else if (mode === 'pomodoro' && pmT) title = pmT;
+  else if (cd.status === 'running' || cd.status === 'paused') title = hms(Math.ceil(cdRemaining(t) / 1000)) + ' · Countdown';
+  else if (cd.status === 'finished') title = "Time's up · Countdown";
+  else if (sw.status === 'running') title = hms(Math.floor(Math.min(swElapsed(t), SW_MAX) / 1000)) + ' · Stopwatch';
+  else if (pmT) title = pmT;
+  if (document.title !== title) document.title = title;
+  if (mode === 'clock' || mode === 'season') { const st = statusText(); if (statusEl.textContent !== st) statusEl.textContent = st; }
+}
+document.addEventListener('visibilitychange', () => { cdCheck(); pmCheck(); syncWake(); });
+
+/* ───────────────────────── start ───────────────────────── */
+let started = false;
+function start(data) {
+  if (started) return; started = true;
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem('filament-timekeeper/1')); } catch (e) {}
+  restore(stored); restore(data);
+  buildGlyphs();
+  computeView(Date.now(), 0);
+  syncFields(); syncSliders(); syncSound(); syncUI();
+  resize();
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
+  window.addEventListener('resize', resize);
+  setInterval(tick, 250);
+  requestAnimationFrame(ts => { lastTs = ts; requestAnimationFrame(frame); });
+}
+const q = /[?&]q=([\d.]+)/.exec(location.search || '');
+if (q) { qLock = true; quality = clamp(+q[1] || 1, 0.3, 1); }
+window.filament = { SEASON2: SEASON2, layout: layout, cd: cd, sw: sw, pomo: pomo, pomoChime: pomoChime, ticker: ticker, tickBuffer: tickBuffer, sound: sound, SP: SP, buildDrone: buildDrone, chime: chime, view: V };
+
+const hot = window.claude && window.claude.hot;
+try { if (hot && hot.snapshot) hot.snapshot(() => ({ mode: mode, hour12: hour12, cd: cd, sw: sw, pomo: pomo, sound: SP })); } catch (e) {}
+if (hot && hot.ready) { try { hot.ready(start); } catch (e) {} setTimeout(() => start({}), 600); }
+else start((hot && hot.data) || {});
+})();
+</script>
