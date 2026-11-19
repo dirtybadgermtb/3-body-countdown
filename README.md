@@ -16,9 +16,23 @@ It is a single HTML file with no dependencies, no build step to run it, no accou
 
 Each mode keeps its own state, and running timers keep going while another mode is shown. Times are worked out from the system clock, so they stay correct after the tab has been in the background, and a running timer survives a reload.
 
+## Background
+
+**Settings → Background** puts one three-body orbit behind the digits, drawn as three glowing bodies with fading trails. It is off by default. The choices are Figure eight, Circle, Ring of loops, Twin loops and Flower. Each is a real periodic solution of the equal-mass three-body problem, integrated in the page when you pick it, not an animation file:
+
+| Choice | Orbit |
+| --- | --- |
+| Figure eight | Chenciner and Montgomery's figure-eight choreography |
+| Circle | Lagrange's solution: three bodies sharing one circle |
+| Ring of loops | Broucke A2 |
+| Twin loops | Broucke R1 |
+| Flower | Broucke A11 |
+
+Starting conditions for the Broucke orbits are from the Belgrade three-body gallery; each one was checked to return to its start within 0.0004.
+
 ## Sound
 
-Sound is off until you turn it on. It is a low, pulsing bass drone that plays only while the timer on screen is running (Clock and Season 2 always count). **Tune sound** opens live controls for root tone, volume, sub bass, octave and fifth harmonics, warmth, pulse rate and depth, a wandering high shimmer, and a tick tuned to the drone. A few presets set everything at once. A soft bell marks the end of a countdown, each Pomodoro period and the premiere.
+Sound is off until you turn it on. It is a low, pulsing bass drone that plays only while the timer on screen is running (Clock and Season 2 always count). **Settings** opens live controls for root tone, volume, sub bass, octave and fifth harmonics, warmth, pulse rate and depth, a wandering high shimmer, and a tick tuned to the drone. A few presets set everything at once. A soft bell marks the end of a countdown, each Pomodoro period and the premiere.
 
 ## Keyboard
 
@@ -29,7 +43,8 @@ Sound is off until you turn it on. It is a low, pulsing bass drone that plays on
 | R | Reset |
 | F | Full screen |
 | M | Sound on or off |
-| Esc | Close the sound controls or leave full screen |
+| B | Next background |
+| Esc | Close Settings or leave full screen |
 
 ## Editing
 

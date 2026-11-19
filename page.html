@@ -109,6 +109,7 @@ button, input { font: inherit; color: inherit; }
 .hint { margin: 8px 0 0; font-size: 13px; color: var(--ink-dim); max-width: 46ch; }
 .note { margin: 0; max-width: 54ch; text-align: center; font-size: 13px; line-height: 1.45; color: var(--ink-dim); text-wrap: balance; }
 .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.sound-sec { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .sliders { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 5px 22px; margin-top: 12px; }
 .row { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 8px; min-width: 0; }
 .row label { font-size: 13px; color: var(--ink); }
@@ -144,8 +145,13 @@ input[type="range"]:focus-visible { outline-offset: 0; border-radius: 8px; }
 @media (min-width: 900px), (orientation: landscape) and (min-width: 640px) and (max-height: 520px) {
   .app.tuning { grid-template-columns: minmax(0, 1fr) 316px; grid-template-rows: auto minmax(140px, 1fr) auto; }
   .app.tuning .bar { grid-column: 1 / -1; }
-  .app.tuning .sound { grid-column: 2; grid-row: 2 / 4; max-height: none; border-top: 0; border-left: 1px solid var(--line); padding-left: 20px; }
+  .app.tuning .sound { grid-column: 2; grid-row: 2 / 4; max-height: none; min-height: 0; border-top: 0; border-left: 1px solid var(--line); padding-left: 20px; }
   .app.tuning .sliders { grid-template-columns: 1fr; }
+}
+@media (orientation: landscape) and (max-height: 520px) and (min-width: 640px) and (max-width: 899px) {
+  /* a phone on its side with Settings open: slimmer panel, so the timer controls keep their row */
+  .app.tuning { grid-template-columns: minmax(0, 1fr) min(316px, 36vw); grid-template-rows: auto minmax(100px, 1fr) auto; }
+  .app.tuning .field input { width: 58px; }
 }
 
 /* full screen: the chrome fades away while nothing is being touched */
@@ -165,7 +171,7 @@ body.idle .bar, body.idle .controls, body.idle .sound { opacity: 0; pointer-even
     </div>
     <div class="tools">
       <button type="button" class="btn" id="soundToggle" aria-pressed="false" title="Turn sound on or off (M)">Sound off</button>
-      <button type="button" class="btn" id="tuneToggle" aria-expanded="false" aria-controls="soundPanel" title="Open the sound controls">Tune sound</button>
+      <button type="button" class="btn" id="tuneToggle" aria-expanded="false" aria-controls="soundPanel" title="Background and sound settings">Settings</button>
       <button type="button" class="btn" id="fsToggle" aria-pressed="false" title="Full screen (F)">Full screen</button>
     </div>
   </header>
@@ -220,8 +226,13 @@ body.idle .bar, body.idle .controls, body.idle .sound { opacity: 0; pointer-even
     <p class="credit" id="credit">Created by Fable 5.2 Extra</p>
   </div>
 
-  <aside class="sound" id="soundPanel" aria-label="Sound controls" hidden>
+  <aside class="sound" id="soundPanel" aria-label="Settings" hidden>
     <div class="sound-head">
+      <h2 id="bgHead">Background</h2>
+    </div>
+    <p class="hint">One three-body orbit, worked out live and drawn behind the digits. Press B to cycle.</p>
+    <div class="presets" id="bgChoices" role="group" aria-labelledby="bgHead"></div>
+    <div class="sound-head sound-sec">
       <h2>Sound</h2>
       <button type="button" class="btn small" id="soundToggle2" aria-pressed="false">Turn on</button>
     </div>
@@ -1114,6 +1125,132 @@ function resize() {
   labelKey = '';
 }
 
+/* ───────────────────────── background orbits ─────────────────────────
+   Periodic solutions of the equal-mass three-body problem (G = m = 1). Each is integrated over one
+   period when chosen (Dormand-Prince 5(4), adaptive), sampled evenly, and the tiny closing error is
+   spread across the period so it loops seamlessly. Starting conditions: the figure eight from
+   Chenciner & Montgomery (Simo's values); the others from Broucke's families, as listed in the
+   Belgrade three-body gallery. Every one was checked to return to its start within 0.0004. */
+const onAxis = (x1, x2, x3, v1, v2, v3) => [x1, 0, x2, 0, x3, 0, 0, v1, 0, v2, 0, v3];
+const ORBITS = [
+  ['off', 'Off'],
+  ['eight', 'Figure eight', [-0.97000436, 0.24308753, 0.97000436, -0.24308753, 0, 0, 0.466203685, 0.43236573, 0.466203685, 0.43236573, -0.93240737, -0.86473146], 6.32591398],
+  ['circle', 'Circle'],                       // Lagrange: three bodies sharing one circle
+  ['loops', 'Ring of loops', onAxis(0.336130095, 0.7699893804, -1.1061194753, 1.532431537, -0.6287350978, -0.9036964391), 7.702408],
+  ['twin', 'Twin loops', onAxis(0.808310623, -0.4954148566, -0.3128957664, 0.9901979166, -2.7171431768, 1.7269452602), 5.226525],
+  ['flower', 'Flower', onAxis(0.0132604844, 1.4157286016, -1.4289890859, 1.054151921, -0.2101466639, -0.8440052572), 32.584945]
+];
+const ORBIT_RATE = 0.25;                    // orbit time units per second of animation
+const DP_A = [[], [1/5], [3/40, 9/40], [44/45, -56/15, 32/9], [19372/6561, -25360/2187, 64448/6561, -212/729], [9017/3168, -355/33, 46732/5247, 49/176, -5103/18656], [35/384, 0, 500/1113, 125/192, -2187/6784, 11/84]];
+const DP_B5 = [35/384, 0, 500/1113, 125/192, -2187/6784, 11/84, 0], DP_B4 = [5179/57600, 0, 7571/16695, 393/640, -92097/339200, 187/2100, 1/40];
+function nbody(s, d) {
+  let dx = s[2] - s[0], dy = s[3] - s[1], r = Math.hypot(dx, dy), q = 1 / (r * r * r); const ax12 = dx * q, ay12 = dy * q;
+  dx = s[4] - s[0]; dy = s[5] - s[1]; r = Math.hypot(dx, dy); q = 1 / (r * r * r); const ax13 = dx * q, ay13 = dy * q;
+  dx = s[4] - s[2]; dy = s[5] - s[3]; r = Math.hypot(dx, dy); q = 1 / (r * r * r); const ax23 = dx * q, ay23 = dy * q;
+  for (let j = 0; j < 6; j++) d[j] = s[6 + j];
+  d[6] = ax12 + ax13; d[7] = ay12 + ay13; d[8] = ax23 - ax12; d[9] = ay23 - ay12; d[10] = -ax13 - ax23; d[11] = -ay13 - ay23;
+}
+function integrateOrbit(s0, T, N) {
+  const K = [0, 1, 2, 3, 4, 5, 6].map(() => new Float64Array(12)), tmp = new Float64Array(12), y5 = new Float64Array(12);
+  const s = Float64Array.from(s0), out = new Float32Array((N + 1) * 6);
+  let t = 0, h = 1e-3;
+  for (let j = 0; j < 6; j++) out[j] = s[j];
+  for (let i = 1; i <= N; i++) {
+    const tEnd = T * i / N;
+    while (t < tEnd - 1e-13) {
+      if (t + h > tEnd) h = tEnd - t;
+      for (let k = 0; k < 7; k++) {
+        for (let j = 0; j < 12; j++) { let v = s[j]; for (let m = 0; m < k; m++) v += h * DP_A[k][m] * K[m][j]; tmp[j] = v; }
+        nbody(tmp, K[k]);
+      }
+      let err = 0;
+      for (let j = 0; j < 12; j++) {
+        let a5 = s[j], a4 = s[j];
+        for (let m = 0; m < 7; m++) { a5 += h * DP_B5[m] * K[m][j]; a4 += h * DP_B4[m] * K[m][j]; }
+        y5[j] = a5; err = Math.max(err, Math.abs(a5 - a4) / (1e-10 * (1 + Math.abs(a5))));
+      }
+      if (err <= 1) { t += h; s.set(y5); }
+      h *= Math.min(4, Math.max(0.2, 0.9 * Math.pow(err || 1e-12, -0.2)));
+    }
+    for (let j = 0; j < 6; j++) out[i * 6 + j] = s[j];
+  }
+  return out;
+}
+const orbitCache = {};
+function orbitData(key) {
+  if (orbitCache[key]) return orbitCache[key];
+  const def = ORBITS.find(o => o[0] === key);
+  if (!def || key === 'off') return null;
+  let T, N, pos;
+  if (key === 'circle') {
+    T = TAU * Math.pow(3, 0.25); N = 1200; pos = new Float32Array((N + 1) * 6);
+    for (let i = 0; i <= N; i++) for (let b = 0; b < 3; b++) { const a = TAU * (i / N + b / 3); pos[i * 6 + b * 2] = Math.cos(a); pos[i * 6 + b * 2 + 1] = Math.sin(a); }
+  } else {
+    T = def[3]; N = Math.ceil(T * 420); pos = integrateOrbit(def[2], T, N);
+    for (let i = 0; i <= N; i++) for (let j = 0; j < 6; j++) pos[i * 6 + j] -= (pos[N * 6 + j] - pos[j]) * i / N;   // close the loop exactly
+  }
+  let mx = 0, my = 0;
+  for (let i = 0; i < pos.length; i += 2) { mx = Math.max(mx, Math.abs(pos[i])); my = Math.max(my, Math.abs(pos[i + 1])); }
+  const paths = [0, 1, 2].map(b => { const pa = new Path2D(); for (let i = 0; i <= N; i += 2) i ? pa.lineTo(pos[i * 6 + b * 2], pos[i * 6 + b * 2 + 1]) : pa.moveTo(pos[b * 2], pos[b * 2 + 1]); pa.closePath(); return pa; });
+  return (orbitCache[key] = { T: T, N: N, pos: pos, mx: mx, my: my, paths: paths });
+}
+
+let bgChoice = 'off', bgPrev = null, bgPrevA = 0, bgA = 0;
+const ORBIT_COL = ['255,112,30', '255,178,66', '255,232,178'];
+const BG_BANDS = 8, bgSeg = [0, 1, 2].map(() => Array.from({ length: BG_BANDS }, () => []));
+function drawOrbit(key, level, W, Hh, s) {
+  const o = orbitData(key);
+  if (!o || level < 0.01) return;
+  const N = o.N, p = o.pos, sc = Math.min(W * 0.46 / o.mx, Hh * 0.44 / o.my), cx = W / 2, cy = Hh / 2;
+  // the whole path, barely there, so the shape reads at a glance; drawn once per size and reused
+  const gk = W + 'x' + Hh;
+  if (o.ghostKey !== gk) {
+    const g = o.ghost || (o.ghost = document.createElement('canvas')), gx = g.getContext('2d');
+    g.width = W; g.height = Hh; gx.clearRect(0, 0, W, Hh);
+    gx.setTransform(sc, 0, 0, -sc, cx, cy); gx.lineWidth = 1 * s / sc; gx.globalCompositeOperation = 'lighter';
+    for (let b = 0; b < 3; b++) { gx.strokeStyle = 'rgba(' + ORBIT_COL[b] + ',0.06)'; gx.stroke(o.paths[b]); }
+    o.ghostKey = gk;
+  }
+  ctx.globalAlpha = level; ctx.drawImage(o.ghost, 0, 0); ctx.globalAlpha = 1;
+  // fading trails behind each body
+  let hf = ((animT * ORBIT_RATE) % o.T) / o.T * N; if (hf < 0) hf += N;
+  const h0 = Math.floor(hf), fr = hf - h0, L = Math.min(Math.round(N * 0.6), Math.round(N * 3.2 / o.T)), stride = Math.max(1, Math.floor(L / 260));
+  for (let b = 0; b < 3; b++) {
+    const ia = h0 * 6 + b * 2, ib = (h0 + 1 > N ? 1 : h0 + 1) * 6 + b * 2;
+    let px = cx + (p[ia] + (p[ib] - p[ia]) * fr) * sc, py = cy - (p[ia + 1] + (p[ib + 1] - p[ia + 1]) * fr) * sc;
+    const hx = px, hy = py, segs = bgSeg[b];
+    for (let k = 0; k < BG_BANDS; k++) segs[k].length = 0;
+    for (let j = 0; j < L; j += stride) {
+      let i = h0 - j; if (i < 0) i += N;
+      const x = cx + p[i * 6 + b * 2] * sc, y = cy - p[i * 6 + b * 2 + 1] * sc;
+      const band = Math.min(BG_BANDS - 1, Math.floor(j / L * BG_BANDS));
+      segs[band].push(px, py, x, y); px = x; py = y;
+    }
+    ctx.lineWidth = 1.5 * s; ctx.lineCap = 'round';
+    for (let k = 0; k < BG_BANDS; k++) {
+      const a = Math.pow(1 - (k + 0.5) / BG_BANDS, 1.6) * 0.4 * level, d = segs[k];
+      if (!d.length) continue;
+      ctx.strokeStyle = 'rgba(' + ORBIT_COL[b] + ',' + a.toFixed(3) + ')'; ctx.beginPath();
+      for (let m = 0; m < d.length; m += 4) { ctx.moveTo(d[m], d[m + 1]); ctx.lineTo(d[m + 2], d[m + 3]); }
+      ctx.stroke();
+    }
+    const r = 9 * s, g = ctx.createRadialGradient(hx, hy, 0, hx, hy, r);
+    g.addColorStop(0, 'rgba(' + ORBIT_COL[b] + ',' + (0.65 * level).toFixed(3) + ')'); g.addColorStop(0.35, 'rgba(' + ORBIT_COL[b] + ',' + (0.22 * level).toFixed(3) + ')'); g.addColorStop(1, 'rgba(' + ORBIT_COL[b] + ',0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(hx, hy, r, 0, TAU); ctx.fill();
+  }
+  ctx.lineCap = 'butt';
+}
+function setBackground(key) {
+  if (!ORBITS.some(o => o[0] === key) || key === bgChoice) return;
+  if (bgA > 0.02) { bgPrev = bgChoice; bgPrevA = bgA; }
+  bgChoice = key; bgA = 0;
+  try { orbitData(key); } catch (e) {}
+  syncBackground(); save();
+}
+function syncBackground() {
+  Array.prototype.forEach.call($('bgChoices').children, b => b.setAttribute('aria-pressed', String(b.dataset.bg === bgChoice)));
+}
+
 let labelKey = '', frameDt = 0.016, rowW = 0, rowMode = '', layout = {};
 function drawFrame(rt) {
   const W = cv.width, Hh = cv.height, s = pxScale, P = PITCH, str = V.main, n = str.length;
@@ -1131,7 +1268,13 @@ function drawFrame(rt) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, Hh);
-  ctx.globalCompositeOperation = 'lighter'; ctx.fillStyle = 'rgb(255,104,18)';
+  ctx.globalCompositeOperation = 'lighter';
+  // background orbit: fades in on choice, the previous one fades out; it dims with the digits when paused
+  bgA = Math.min(1, bgA + frameDt / 1.2); bgPrevA = Math.max(0, bgPrevA - frameDt / 0.8);
+  const bgLevel = 0.5 + 0.5 * clamp(inten, 0, 1);
+  if (bgPrev && bgPrevA > 0) drawOrbit(bgPrev, bgPrevA * bgLevel, W, Hh, s);
+  if (bgChoice !== 'off') drawOrbit(bgChoice, smooth(bgA) * bgLevel, W, Hh, s);
+  ctx.fillStyle = 'rgb(255,104,18)';
 
   const lw = clamp(H * 0.005, 0.6 * s, 1.3 * s);
   const detail = quality * clamp(H / 400, 0.5, 1);
@@ -1230,7 +1373,7 @@ function save() {
   saveTimer = setTimeout(() => {
     try {
       localStorage.setItem('filament-timekeeper/1', JSON.stringify({
-        mode: mode, hour12: hour12, cd: cd, sw: sw, pomo: pomo, sound: SP
+        mode: mode, hour12: hour12, cd: cd, sw: sw, pomo: pomo, sound: SP, bg: bgChoice
       }));
     } catch (e) {}
   }, 200);
@@ -1261,6 +1404,7 @@ function restore(data) {
       pomo.status = 'paused'; pomo.acc = +pd.acc; pomo.seen = pmPhase(pomo.acc).i;
     }
   }
+  if (typeof data.bg === 'string' && ORBITS.some(o => o[0] === data.bg)) bgChoice = data.bg;
   if (data.sound) for (const k in SOUND_DEFAULT) if (typeof data.sound[k] === 'number' && isFinite(data.sound[k])) SP[k] = data.sound[k];
 }
 
@@ -1393,6 +1537,12 @@ for (const k in SLIDERS) {
     save();
   });
 }
+ORBITS.forEach(o => {
+  const b = document.createElement('button');
+  b.type = 'button'; b.className = 'btn small'; b.textContent = o[1]; b.dataset.bg = o[0]; b.id = 'bg-' + o[0];
+  b.addEventListener('click', () => setBackground(o[0]));
+  $('bgChoices').appendChild(b);
+});
 PRESETS.forEach(p => {
   const b = document.createElement('button');
   b.type = 'button'; b.className = 'btn small'; b.textContent = p[0];
@@ -1457,6 +1607,7 @@ document.addEventListener('keydown', e => {
   } else if (key === 'r') { if (mode === 'countdown') cdReset(); else if (mode === 'stopwatch') swReset(); else if (mode === 'pomodoro') pmReset(); }
   else if (key === 'f') toggleFullscreen();
   else if (key === 'm') sound.setOn(!sound.on);
+  else if (key === 'b') { const i = ORBITS.findIndex(o => o[0] === bgChoice); setBackground(ORBITS[(i + 1) % ORBITS.length][0]); }
   else if (key === '1') setMode('countdown');
   else if (key === '2') setMode('clock');
   else if (key === '3') setMode('stopwatch');
@@ -1500,7 +1651,8 @@ function start(data) {
   restore(stored); restore(data);
   buildGlyphs();
   computeView(Date.now(), 0);
-  syncFields(); syncSliders(); syncSound(); syncUI();
+  syncFields(); syncSliders(); syncSound(); syncUI(); syncBackground();
+  if (bgChoice !== 'off') { bgA = 1; try { orbitData(bgChoice); } catch (e) {} }
   resize();
   if (window.ResizeObserver) new ResizeObserver(resize).observe(stage);
   window.addEventListener('resize', resize);
@@ -1509,10 +1661,10 @@ function start(data) {
 }
 const q = /[?&]q=([\d.]+)/.exec(location.search || '');
 if (q) { qLock = true; quality = clamp(+q[1] || 1, 0.3, 1); }
-window.filament = { SEASON2: SEASON2, layout: layout, cd: cd, sw: sw, pomo: pomo, pomoChime: pomoChime, ticker: ticker, tickBuffer: tickBuffer, sound: sound, SP: SP, buildDrone: buildDrone, chime: chime, view: V };
+window.filament = { orbitData: orbitData, integrateOrbit: integrateOrbit, ORBITS: ORBITS, setBackground: setBackground, bg: () => bgChoice, SEASON2: SEASON2, layout: layout, cd: cd, sw: sw, pomo: pomo, pomoChime: pomoChime, ticker: ticker, tickBuffer: tickBuffer, sound: sound, SP: SP, buildDrone: buildDrone, chime: chime, view: V };
 
 const hot = window.claude && window.claude.hot;
-try { if (hot && hot.snapshot) hot.snapshot(() => ({ mode: mode, hour12: hour12, cd: cd, sw: sw, pomo: pomo, sound: SP })); } catch (e) {}
+try { if (hot && hot.snapshot) hot.snapshot(() => ({ mode: mode, hour12: hour12, cd: cd, sw: sw, pomo: pomo, sound: SP, bg: bgChoice })); } catch (e) {}
 if (hot && hot.ready) { try { hot.ready(start); } catch (e) {} setTimeout(() => start({}), 600); }
 else start((hot && hot.data) || {});
 })();
