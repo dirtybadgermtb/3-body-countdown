@@ -1,4 +1,4 @@
-# Filament Timekeeper
+# 3 Body Problem Clock
 
 A countdown timer, clock, stopwatch, Pomodoro timer and Season 2 premiere countdown whose digits are drawn live as tangled strands of amber light, inspired by the countdown in *3 Body Problem*. The digits are generated every frame from the actual time values; there are no images or video.
 

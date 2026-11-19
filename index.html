@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>html{box-sizing:border-box;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}</style>
-<title>Filament Timekeeper</title>
+<title>3 Body Problem Clock</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 /* Layout: one screen. A quiet rail of mode and utility buttons on top, the flame digits alone on a
@@ -1353,7 +1353,7 @@ const modeBtns = { countdown: $('modeCountdown'), clock: $('modeClock'), stopwat
 const panels = { countdown: $('panelCountdown'), clock: $('panelClock'), stopwatch: $('panelStopwatch'), pomodoro: $('panelPomodoro'), season: $('panelSeason') };
 const MODE_NAME = { countdown: 'Countdown', clock: 'Clock', stopwatch: 'Stopwatch', pomodoro: 'Pomodoro', season: 'Season 2' };
 const pm = { work: $('pmWork'), rest: $('pmRest'), sessions: $('pmSessions'), go: $('pmGo'), skip: $('pmSkip'), reset: $('pmReset') };
-const BASE_TITLE = document.title || 'Filament Timekeeper';
+const BASE_TITLE = document.title || '3 Body Problem Clock';
 
 function srText() { return MODE_NAME[mode] + ' ' + V.main.trim() + (mode === 'clock' && V.sub ? ' ' + V.sub : ''); }
 function timeLabel(ms) {
