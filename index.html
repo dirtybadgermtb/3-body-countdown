@@ -241,9 +241,8 @@ body.idle .bar, body.idle .controls, body.idle .sound { opacity: 0; pointer-even
     <div class="presets" id="bgChoices" role="group" aria-labelledby="bgHead"></div>
     <div class="sound-head sound-sec">
       <h2>Sound</h2>
-      <button type="button" class="btn small" id="soundToggle2" aria-pressed="false">Turn on</button>
     </div>
-    <p class="hint" id="soundHint">Sound is off. Turn it on to hear it while a timer is running, or at any time in Clock.</p>
+    <p class="hint" id="soundHint" role="status">Sound is off. Turn it on with the Sound button at the top, or press M.</p>
     <div class="presets" id="presets" role="group" aria-label="Sound presets"></div>
     <div class="sliders">
       <div class="row"><label for="sRoot">Root tone</label><output id="oRoot" for="sRoot"></output><input id="sRoot" type="range" min="24" max="43" step="1"></div>
@@ -516,6 +515,12 @@ function buildDrone(ac, p) {
   const sb = osc('sine'); sb.connect(subG); subG.connect(bus);
   const oc = osc('sine', 3); oc.connect(octG); octG.connect(bus);
   const fi = osc('sine', -3); fi.connect(fifG); fifG.connect(bus);
+  // Body: the 3rd, 4th and 6th harmonics (165, 220 and 330 Hz on A1), all octaves and fifths of the
+  // root. Phone and laptop speakers can't play the root itself; these let the ear hear it anyway.
+  const b3G = gain(0), b4G = gain(0), b6G = gain(0);
+  const b3 = osc('sine', -2); b3.connect(b3G); b3G.connect(bus);
+  const b4 = osc('sine', 2); b4.connect(b4G); b4G.connect(bus);
+  const b6 = osc('sine', -3); b6.connect(b6G); b6G.connect(bus);
   const wLP = ac.createBiquadFilter(); wLP.type = 'lowpass'; wLP.Q.value = 0.8;
   const wA = osc('sawtooth', -7), wB = osc('sawtooth', 6); wA.connect(wLP); wB.connect(wLP); wLP.connect(warmG); warmG.connect(bus);
 
@@ -546,11 +551,13 @@ function buildDrone(ac, p) {
     const t = ac.currentTime, f0 = midiHz(q.root);
     const S = (param, v) => { if (tc) param.setTargetAtTime(v, t, tc); else param.value = v; };
     S(rA.frequency, f0); S(rB.frequency, f0); S(sb.frequency, f0 / 2); S(oc.frequency, f0 * 2); S(fi.frequency, f0 * 1.5);
-    S(wA.frequency, f0); S(wB.frequency, f0);
+    S(wA.frequency, f0); S(wB.frequency, f0); S(b3.frequency, f0 * 3); S(b4.frequency, f0 * 4); S(b6.frequency, f0 * 6);
     const w = q.warmth / 100, d = q.depth / 100;
     S(subG.gain, q.sub / 100 * 0.5); S(octG.gain, q.octave / 100 * 0.24); S(fifG.gain, q.fifth / 100 * 0.24);
-    S(warmG.gain, w * 0.15); S(wLP.frequency, f0 * (1.6 + 5.4 * w));
-    const cut = f0 * (3 + 9 * w);
+    const body = 0.35 + 0.65 * w;
+    S(b3G.gain, body * (0.05 + 0.12 * q.fifth / 100)); S(b4G.gain, body * (0.07 + 0.16 * q.octave / 100)); S(b6G.gain, body * (0.03 + 0.06 * q.fifth / 100));
+    S(warmG.gain, 0.03 + w * 0.13); S(wLP.frequency, f0 * (2.5 + 8 * w));
+    const cut = f0 * (6 + 12 * w);
     S(tone.frequency, cut); S(dF.gain, d * cut * 0.35);
     S(l1.frequency, q.rate); S(l2.frequency, q.rate * 2); S(d1.gain, d * 0.7); S(d2.gain, d * 0.3);
     voices.forEach(v => S(v.o.frequency, f0 * v.m));
@@ -562,9 +569,9 @@ function buildDrone(ac, p) {
 }
 
 /* One soft bell, tuned to the root, with a long tail. It joins the master bus beside the drone. */
-function chime(ac, dest, rootHz, when) {
+function chime(ac, dest, rootHz, when, level) {
   let base = rootHz; while (base < 196) base *= 2;
-  const mix = ac.createGain(); mix.gain.value = 0.5;
+  const mix = ac.createGain(); mix.gain.value = level || 0.5;
   const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 2400; lp.Q.value = 0.4;
   mix.connect(lp); lp.connect(dest);
   const oscs = [[1, 1, 2.8], [2, 0.3, 1.7], [3, 0.12, 1.0], [4.2, 0.04, 0.6]].map(v => {
@@ -579,19 +586,26 @@ function chime(ac, dest, rootHz, when) {
 
 const sound = {
   on: false, ac: null, d: null, pending: null, ringing: [], doneFor: -1, offTimer: 0,
-  level() { return Math.pow(SP.volume / 100, 2) * 0.9; },
+  level() { return Math.pow(SP.volume / 100, 2) * 1.4; },
   async setOn(v) {
     cdCheck(); pmCheck();
     if (v) {
       if (!this.ac) {
         const AC = window.AudioContext || window.webkitAudioContext;
         if (!AC) { $('soundHint').textContent = 'This browser cannot play Web Audio, so sound is unavailable.'; return; }
+        // iPhone: play through the ringer switch, like a music app, instead of being muted by it
+        try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
         this.ac = new AC(); this.d = buildDrone(this.ac, SP); this.d.start();
       }
       this.on = true; syncSound();
-      try { await this.ac.resume(); } catch (e) {}
+      const resumed = this.ac.resume();                   // called inside the click, which browsers require
+      try { await resumed; } catch (e) {}
       if (!this.on) return;
-      this.d.out.gain.setTargetAtTime(this.level(), this.ac.currentTime, 0.6);
+      const t = this.ac.currentTime;
+      this.d.out.gain.cancelScheduledValues(t); this.d.out.gain.setTargetAtTime(this.level(), t, 0.05);
+      // one quiet bell right away, so turning sound on always makes a sound, even with the timer stopped
+      this.ringing.push(chime(this.ac, this.d.out, midiHz(SP.root), t + 0.12, 0.3));
+      if (!runState().on) flashStatus('Sound plays while the timer runs', 4500);
       this.syncChime(); pomoChime.sync(true); ticker.sync();
     } else {
       this.on = false; syncSound();
@@ -1346,7 +1360,7 @@ function frame(ts) {
 const els = {
   app: $('app'), cdH: $('cdH'), cdM: $('cdM'), cdS: $('cdS'), cdGo: $('cdGo'), cdReset: $('cdReset'),
   swGo: $('swGo'), swReset: $('swReset'), fmt12: $('fmt12'), fmt24: $('fmt24'),
-  soundToggle: $('soundToggle'), soundToggle2: $('soundToggle2'), tune: $('tuneToggle'), fs: $('fsToggle'),
+  soundToggle: $('soundToggle'), tune: $('tuneToggle'), fs: $('fsToggle'),
   panel: $('soundPanel'), presets: $('presets'), hint: $('soundHint')
 };
 const modeBtns = { countdown: $('modeCountdown'), clock: $('modeClock'), stopwatch: $('modeStopwatch'), pomodoro: $('modePomodoro'), season: $('modeSeason') };
@@ -1360,7 +1374,10 @@ function timeLabel(ms) {
   try { return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit', hour12: hour12 }).format(new Date(ms)); }
   catch (e) { return ''; }
 }
+let flash = null;
+function flashStatus(text, ms) { flash = { text: text, until: Date.now() + ms }; syncUI(); }
 function statusText() {
+  if (flash) { if (Date.now() < flash.until) return flash.text; flash = null; }
   if (mode === 'countdown') {
     if (cd.status === 'finished') return "Time's up";
     if (cd.status === 'paused') return 'Paused';
@@ -1456,12 +1473,11 @@ function syncFields() {
 function syncSound() {
   const on = sound.on;
   els.soundToggle.textContent = on ? 'Sound on' : 'Sound off'; els.soundToggle.setAttribute('aria-pressed', String(on));
-  els.soundToggle2.textContent = on ? 'Turn off' : 'Turn on'; els.soundToggle2.setAttribute('aria-pressed', String(on));
   const waiting = on && !runState().on;                 // on, but the clock on screen is not counting
-  els.hint.hidden = on && !waiting;
-  els.hint.textContent = waiting
-    ? 'Sound is on and plays only while the timer on screen is running. Start it, or switch to Clock.'
-    : 'Sound is off. Turn it on to hear it while a timer is running, or at any time in Clock.';
+  els.soundToggle.title = waiting ? 'Sound is on. It plays while the timer is running (M)' : 'Turn sound on or off (M)';
+  els.hint.textContent = !on ? 'Sound is off. Turn it on with the Sound button at the top, or press M.'
+    : waiting ? 'Sound is on. It plays while the timer on screen is running, and all the time in Clock and Season 2.'
+    : 'Sound is on and playing.';
 }
 function setMode(m) { if (!MODE_NAME[m] || m === mode) return; mode = m; lastSr = ''; changed(); }
 
@@ -1558,7 +1574,6 @@ PRESETS.forEach(p => {
   els.presets.appendChild(b);
 });
 els.soundToggle.addEventListener('click', () => sound.setOn(!sound.on));
-els.soundToggle2.addEventListener('click', () => sound.setOn(!sound.on));
 function setTuning(open) {
   els.panel.hidden = !open; els.app.classList.toggle('tuning', open);
   els.tune.setAttribute('aria-expanded', String(open));
@@ -1645,7 +1660,7 @@ function tick() {
   else if (sw.status === 'running') title = hms(Math.floor(Math.min(swElapsed(t), SW_MAX) / 1000)) + ' · Stopwatch';
   else if (pmT) title = pmT;
   if (document.title !== title) document.title = title;
-  if (mode === 'clock' || mode === 'season') { const st = statusText(); if (statusEl.textContent !== st) statusEl.textContent = st; }
+  if (flash || mode === 'clock' || mode === 'season') { const st = statusText(); if (statusEl.textContent !== st) statusEl.textContent = st; }
 }
 document.addEventListener('visibilitychange', () => { cdCheck(); pmCheck(); syncWake(); });
 

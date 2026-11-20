@@ -32,7 +32,7 @@ Starting conditions for the Broucke orbits are from the Belgrade three-body gall
 
 ## Sound
 
-Sound is off until you turn it on. It is a low, pulsing bass drone that plays only while the timer on screen is running (Clock and Season 2 always count). **Settings** opens live controls for root tone, volume, sub bass, octave and fifth harmonics, warmth, pulse rate and depth, a wandering high shimmer, and a tick tuned to the drone. A few presets set everything at once. A soft bell marks the end of a countdown, each Pomodoro period and the premiere.
+Sound is off until you turn it on with the **Sound** button at the top (or M). Turning it on plays one quiet bell so you know it is working. The sound is a low, pulsing bass drone that plays only while the timer on screen is running (Clock and Season 2 always count), with enough upper harmonics that phone and laptop speakers can carry it. **Settings** opens live controls for root tone, volume, sub bass, octave and fifth harmonics, warmth, pulse rate and depth, a wandering high shimmer, and a tick tuned to the drone. A few presets set everything at once. A soft bell marks the end of a countdown, each Pomodoro period and the premiere.
 
 ## Keyboard
 
