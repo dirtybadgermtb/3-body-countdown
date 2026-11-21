@@ -396,9 +396,7 @@ function seasonStatus() {
 }
 function seasonNoteText() {
   if (SEASON2 <= Date.now()) return '3 Body Problem Season 2 premiered on Netflix on Thursday, January 14, 2027.';
-  const here = seasonWhen({}), pt = seasonWhen({ timeZone: 'America/Los_Angeles' });
-  return "3 Body Problem Season 2 premieres on Netflix on Thursday, January 14, 2027. The count runs to 12:00 AM Pacific, Netflix's usual release time" +
-    (here && pt && here !== pt ? ', which is ' + here + ' where you are.' : '.');
+  return "3 Body Problem Season 2 premieres on Netflix on Thursday, January 14, 2027. The countdown runs to midnight Pacific time, Netflix's usual release time.";
 }
 let seasonPrev = SEASON2 - Date.now();
 function seasonCheck() {              // one bell if the premiere arrives while the page is open
