@@ -1011,6 +1011,16 @@ const kind3 = s => s.kind === 3;
 function glyphPass(cell, gl, cx, top, H, alpha, loosen, rise, detail) {
   const cs = gl.contours, nC = cs.length;
   if (alpha < 0.015 || !nC) return;
+  if (bgChoice !== 'off' || (bgPrev && bgPrevA > 0)) {
+    // Occlude the orbit inside the moving glyph, preserving its open counters.
+    ctx.save();
+    ctx.setTransform(H, 0, 0, H, cx, top - rise * H);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = clamp(alpha / Math.max(inten, 0.001), 0, 1);
+    ctx.fillStyle = '#000';
+    ctx.fill(gl.path, 'evenodd');
+    ctx.restore();
+  }
   // a trace of translucent body, so the hollow shape reads as glass rather than wire
   ctx.globalAlpha = 0.03 * alpha; ctx.setTransform(H, 0, 0, H, cx, top - rise * H);
   ctx.fill(gl.path, 'evenodd');
